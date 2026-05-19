@@ -10,10 +10,10 @@ export const COLORS = [
 export const ROUTES = COLORS.flatMap((c) => Array.from({ length: c.count }, (_, i) => ({ ...c, num: i + 1, id: `${c.key}-${i + 1}` })));
 
 export const MODE_RULES = {
-  normal: ['Punkte hängen von der Boulderfarbe ab.', 'Flash-Bonus: Top im ersten Versuch gibt +50 Punkte.', 'Gewinner ist, wer am Ende die meisten Punkte hat.'],
-  comp: ['Top zählt 25 Punkte.', 'Zone zählt 10 Punkte, solange kein Top erreicht wurde.', 'Flash-Bonus gibt +5 Punkte.'],
-  bonus: ['Grundpunkte wie normal.', 'Rote Tops geben +10% Bonus.', 'Schwarze Tops geben +20% Bonus.'],
-  team: ['Punkteberechnung wie normal.', 'Teilnehmer werden Team A/B zugeordnet.', 'Das Teamleaderboard addiert Punkte je Team.'],
+  normal: ['Punkte hängen von der Boulderfarbe ab.', 'Es gibt keinen Flashbonus.', 'Gewinner ist, wer am Ende die meisten Punkte hat.'],
+  comp: ['Punkte hängen von der Boulderfarbe ab: schwere Boulder geben mehr Punkte.', 'Es gibt keinen Flashbonus.', 'Maximal 12 Versuche pro Boulder; jeder weitere Versuch reduziert Top- und Zone-Punkte um 5%.', 'Zone zählt ungefähr ein Drittel des Top-Werts und wird vom Top überschrieben.'],
+  bonus: ['Keine Versuchszählung.', 'Gelb 100, Grün 200, Weiß 350, Blau 550, Rot 800, Schwarz 1200 Punkte.', 'Zones geben ungefähr ein Drittel der Top-Punkte.', 'Rote Tops geben +10% auf die bisher gesammelten Punkte, schwarze Tops +20%.'],
+  team: ['Punkteberechnung wie normal, ohne Flashbonus.', 'Teilnehmer werden Team A/B zugeordnet.', 'Das Teamleaderboard addiert Punkte je Team.'],
 };
 
 export const AVATAR_COLORS = ['#2D3142', '#3b82f6', '#22c55e', '#ef4444', '#f97316', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b', '#111827', '#B0D7FF', '#f5c842'];

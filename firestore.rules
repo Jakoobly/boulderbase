@@ -11,10 +11,52 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function groupDoc(groupId) {
+      return get(/databases/$(database)/documents/groups/$(groupId));
+    }
+
+    function isGroupCreator(data) {
+      return signedIn() && data.createdBy == request.auth.uid;
+    }
+
+    function isActiveMember(data) {
+      return signedIn()
+        && data.members[request.auth.uid].active == true;
+    }
+
+    function isGroupAdmin(data) {
+      return signedIn()
+        && data.members[request.auth.uid].active == true
+        && (
+          data.createdBy == request.auth.uid
+          || data.members[request.auth.uid].role == "owner"
+          || data.members[request.auth.uid].role == "admin"
+        );
+    }
+
+    function createdByUnchanged() {
+      return request.resource.data.createdBy == resource.data.createdBy;
+    }
+
+    function isJoiningGroupAsSelf() {
+      return signedIn()
+        && createdByUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["members"])
+        && request.resource.data.members[request.auth.uid].uid == request.auth.uid
+        && request.resource.data.members[request.auth.uid].active == true
+        && request.resource.data.members[request.auth.uid].role == "member";
+    }
+
     function isGroupMember(groupId) {
       return signedIn()
         && exists(/databases/$(database)/documents/groups/$(groupId))
-        && get(/databases/$(database)/documents/groups/$(groupId)).data.members[request.auth.uid].active == true;
+        && groupDoc(groupId).data.members[request.auth.uid].active == true;
+    }
+
+    function isGroupCreatorById(groupId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && groupDoc(groupId).data.createdBy == request.auth.uid;
     }
 
     match /users/{uid} {
@@ -24,28 +66,86 @@ service cloud.firestore {
 
       match /friends/{friendUid} {
         allow read: if isSelf(uid);
-        allow create, update, delete: if signedIn() && (request.auth.uid == uid || request.auth.uid == friendUid);
+
+        // Nötig beim Annehmen/Entfernen, weil beide Friend-Dokumente geschrieben werden.
+        allow create, update, delete: if signedIn()
+          && (request.auth.uid == uid || request.auth.uid == friendUid);
       }
     }
 
     match /friendRequests/{requestId} {
-      allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.fromUid == request.auth.uid;
-      allow update, delete: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      // Bewusst etwas offener, weil die App vor dem Senden auch vorhandene/reverse Requests per getDoc prüft.
+      // Sonst scheitert schon das Prüfen auf bestehende Anfragen.
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.status == "pending";
+
+      allow update: if signedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid;
+
+      allow delete: if signedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
     }
 
     match /groups/{groupId} {
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if signedIn();
-      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.members[request.auth.uid].uid == request.auth.uid
+        && request.resource.data.members[request.auth.uid].active == true
+        && request.resource.data.members[request.auth.uid].role == "owner";
+
+      allow update: if signedIn()
+        && createdByUnchanged()
+        && (
+          // Ersteller darf Gruppe verwalten.
+          isGroupCreator(resource.data)
+
+          // Admins dürfen Gruppe/Rollen verwalten, aber nicht den Ersteller ändern.
+          || isGroupAdmin(resource.data)
+
+          // Neue Nutzer dürfen sich selbst als normales Mitglied eintragen.
+          || isJoiningGroupAsSelf()
+
+          // Aktive Mitglieder dürfen App-Updates schreiben, z.B. Stats/sessionCount.
+          || isActiveMember(resource.data)
+        );
+
+      // Nur der Gruppenersteller darf die Gruppe löschen.
+      allow delete: if isGroupCreator(resource.data);
     }
 
     match /sessions/{sessionId} {
       allow read: if signedIn();
-      allow create: if signedIn();
-      allow update: if signedIn();
-      allow delete: if false;
+
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if signedIn()
+        && (
+          resource.data.createdBy == request.auth.uid
+          || resource.data.participants[request.auth.uid] != null
+          || (
+            resource.data.groupId != null
+            && isGroupMember(resource.data.groupId)
+          )
+        );
+
+      // Wichtig fürs Gruppe-Löschen: der Gruppenersteller darf die zugehörigen Sessions löschen.
+      allow delete: if signedIn()
+        && (
+          resource.data.createdBy == request.auth.uid
+          || (
+            resource.data.groupId != null
+            && isGroupCreatorById(resource.data.groupId)
+          )
+        );
     }
 
     match /challenges/{challengeId} {

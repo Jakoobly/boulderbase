@@ -6,7 +6,6 @@ import {
   getDoc,
   getDocs,
   limit,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -38,14 +37,14 @@ export async function searchUsers(searchTerm, currentUid) {
 export async function getFriendState(uid) {
   const [friendsSnap, incomingSnap, outgoingSnap] = await Promise.all([
     getDocs(collection(db, 'users', uid, 'friends')),
-    getDocs(query(collection(db, 'friendRequests'), where('toUid', '==', uid), where('status', '==', 'pending'), orderBy('createdAtMillis', 'desc'))),
-    getDocs(query(collection(db, 'friendRequests'), where('fromUid', '==', uid), where('status', '==', 'pending'), orderBy('createdAtMillis', 'desc'))),
+    getDocs(query(collection(db, 'friendRequests'), where('toUid', '==', uid), where('status', '==', 'pending'))),
+    getDocs(query(collection(db, 'friendRequests'), where('fromUid', '==', uid), where('status', '==', 'pending'))),
   ]);
 
   return {
     friends: friendsSnap.docs.map((d) => ({ uid: d.id, ...d.data() })),
-    incomingRequests: incomingSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-    outgoingRequests: outgoingSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    incomingRequests: incomingSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0)),
+    outgoingRequests: outgoingSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0)),
   };
 }
 

@@ -1,29 +1,68 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
 import AuthScreen from './components/AuthScreen.jsx';
 import Avatar from './components/Avatar.jsx';
+import HomeAddons from './components/HomeAddons.jsx';
+import FriendsScreen from './friends/FriendsScreen.jsx';
 import { auth, db } from './services/firebase.js';
 import { AVATAR_COLORS, AVATAR_ICONS, COLORS, MODE_RULES, ROUTES } from './constants.js';
 import { code, emptyRouteState, rank, safeDate } from './utils.js';
 import './styles.css';
+import './addons.css';
 
 function initialProfile(user) {
   return { name: user.displayName || user.email?.split('@')[0] || 'Gast', status: '', avatarColor: '#2D3142', avatarIcon: '🧗', sessions: 0, tops: 0, flashes: 0, points: 0, matchHistory: [] };
 }
 
-function recalcParticipant(p, mode) {
-  let score = 0, solved = 0, flash = 0;
+function zonePoints(route) {
+  return Math.round(route.pts / 3);
+}
+
+function compAttemptMultiplier(attempts) {
+  // Comp-Modus: kein Flashbonus, aber jeder weitere Versuch reduziert den Wert um 5%.
+  // Bei maximal 12 Versuchen bleiben also noch 45% der Boulder-Punkte übrig.
+  const safeAttempts = Math.min(12, Math.max(1, Number(attempts) || 1));
+  return Math.max(0.45, 1 - (safeAttempts - 1) * 0.05);
+}
+
+function routeScore(route, rd, mode) {
+  const attempts = Math.max(1, Number(rd.attempts) || 1);
   if (mode === 'comp') {
-    ROUTES.forEach((r, i) => { const rd = p.routes[i]; if (rd.solved) { score += 25 + (rd.attempts === 1 ? 5 : 0); solved++; if (rd.attempts === 1) flash++; } else if (rd.zone) score += 10; });
-  } else if (mode === 'bonus') {
-    let base = 0, mult = 1;
-    ROUTES.forEach((r, i) => { const rd = p.routes[i]; if (rd.solved) { base += r.pts + (rd.attempts === 1 ? 50 : 0); solved++; if (rd.attempts === 1) flash++; if (r.bonus) mult += r.bonus / 100; } });
-    score = Math.round(base * mult);
-  } else {
-    ROUTES.forEach((r, i) => { const rd = p.routes[i]; if (rd.solved) { score += r.pts + (rd.attempts === 1 ? 50 : 0); solved++; if (rd.attempts === 1) flash++; } });
+    const multiplier = compAttemptMultiplier(attempts);
+    const topPoints = Math.round(route.pts * multiplier);
+    const zoneValue = Math.round(zonePoints(route) * multiplier);
+    if (rd.solved) return topPoints;
+    if (rd.zone) return Math.max(1, zoneValue);
+    return 0;
   }
-  return { ...p, totalScore: score, routesSolved: solved, flashCount: flash };
+  if (rd.solved) return route.pts;
+  if (rd.zone) return mode === 'bonus' ? zonePoints(route) : Math.round(route.pts * 0.35);
+  return 0;
+}
+
+function recalcParticipant(p, mode) {
+  let score = 0, solved = 0, flash = 0, zones = 0;
+  ROUTES.forEach((r, i) => {
+    const rd = p.routes[i];
+    if (mode === 'bonus' && rd.solved && r.bonus) score += Math.round(score * (r.bonus / 100));
+    score += routeScore(r, rd, mode);
+    if (rd.solved) {
+      solved++;
+    } else if (rd.zone) zones++;
+  });
+  return { ...p, totalScore: score, routesSolved: solved, flashCount: flash, zoneCount: zones };
+}
+
+function secondsLeft(session) {
+  if (!session?.startedAt || !session?.timerMinutes) return 0;
+  return Math.max(0, Math.ceil((session.startedAt + session.timerMinutes * 60000 - Date.now()) / 1000));
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export default function App() {
@@ -43,30 +82,94 @@ export default function App() {
 
   useEffect(() => onAuthStateChanged(auth, async (u) => {
     setUser(u);
-    if (!u) { setScreen('auth'); return; }
+    if (!u) {
+      localStorage.removeItem('bb-current-view');
+      localStorage.removeItem('bb-active-session');
+      setScreen('auth');
+      return;
+    }
     const ref = doc(db, 'users', u.uid);
     const snap = await getDoc(ref);
     const p = snap.exists() ? { ...initialProfile(u), ...snap.data() } : initialProfile(u);
     if (!snap.exists()) await setDoc(ref, p);
     setProfile(p);
-    await reloadGroups(u.uid);
-    setScreen('home');
+    await restoreLastView(u.uid);
   }), []);
 
-  async function reloadGroups(uid = user?.uid) {
-    if (!uid) return;
-    const q = query(collection(db, 'groups'), where(`members.${uid}.active`, '==', true));
-    const snaps = await getDocs(q);
-    setGroups(snaps.docs.map((d) => ({ id: d.id, ...d.data() })));
+  useEffect(() => {
+    if (!user?.uid || screen === 'loading' || screen === 'auth') return;
+    const view = { screen, groupId: activeGroup?.id || null, sessionId: activeSession?.id || null, savedAt: Date.now() };
+    localStorage.setItem('bb-current-view', JSON.stringify(view));
+    if (activeSession?.id && screen === 'game') localStorage.setItem('bb-active-session', activeSession.id);
+  }, [screen, activeGroup?.id, activeSession?.id, user?.uid]);
+
+  async function restoreLastView(uid) {
+    const fallback = () => { localStorage.removeItem('bb-current-view'); localStorage.removeItem('bb-active-session'); setScreen('home'); };
+    let view = null;
+    try { view = JSON.parse(localStorage.getItem('bb-current-view') || 'null'); } catch { view = null; }
+    const legacySessionId = localStorage.getItem('bb-active-session');
+    const sessionId = view?.sessionId || legacySessionId;
+
+    if (sessionId && (view?.screen === 'game' || legacySessionId)) {
+      const s = await getDoc(doc(db, 'sessions', sessionId));
+      if (s.exists()) {
+        const data = { id: s.id, ...s.data() };
+        const canOpen = data.participants?.[uid] || data.createdBy === uid;
+        if (canOpen) {
+          if (data.groupId) {
+            const g = await getDoc(doc(db, 'groups', data.groupId));
+            if (g.exists()) setActiveGroup({ id: g.id, ...g.data() });
+          }
+          listenSession(sessionId, data.status === 'active');
+          setScreen(data.status === 'finished' ? 'results' : 'game');
+          return;
+        }
+      }
+    }
+
+    if (view?.screen === 'group' && view.groupId) {
+      const g = await getDoc(doc(db, 'groups', view.groupId));
+      if (g.exists() && g.data()?.members?.[uid]?.active) {
+        setActiveGroup({ id: g.id, ...g.data() });
+        setScreen('group');
+        return;
+      }
+    }
+
+    if (view?.screen === 'profile' || view?.screen === 'friends') {
+      setScreen(view.screen);
+      return;
+    }
+
+    fallback();
   }
+
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const q = query(collection(db, 'groups'), where(`members.${user.uid}.active`, '==', true));
+    return onSnapshot(q, (snaps) => setGroups(snaps.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!activeGroup?.id) return undefined;
+    const unsubGroup = onSnapshot(doc(db, 'groups', activeGroup.id), (s) => s.exists() && setActiveGroup({ id: s.id, ...s.data() }));
+    const sq = query(collection(db, 'sessions'), where('groupId', '==', activeGroup.id));
+    const unsubSessions = onSnapshot(sq, (ss) => {
+      const list = ss.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
+      setSessions(list);
+      const liveForMe = list.find((s) => s.status === 'active' && s.participants?.[user?.uid]);
+      if (liveForMe && screen === 'group') {
+        listenSession(liveForMe.id, true);
+        setScreen('game');
+      }
+    });
+    return () => { unsubGroup(); unsubSessions(); };
+  }, [activeGroup?.id, user?.uid, screen]);
 
   async function openGroup(id) {
     const s = await getDoc(doc(db, 'groups', id));
-    const g = { id: s.id, ...s.data() };
-    setActiveGroup(g);
-    const sq = query(collection(db, 'sessions'), where('groupId', '==', id));
-    const ss = await getDocs(sq);
-    setSessions(ss.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0)));
+    if (!s.exists()) return notify('Gruppe nicht gefunden');
+    setActiveGroup({ id: s.id, ...s.data() });
     setScreen('group');
   }
 
@@ -76,9 +179,44 @@ export default function App() {
     const id = crypto.randomUUID();
     const g = { name, description: '', avatarColor: '#2D3142', avatarIcon: '🪨', code: code(6), createdBy: user.uid, createdAt: serverTimestamp(), members: { [user.uid]: { uid: user.uid, name: safeName(), avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon, role: 'owner', active: true, joinedAt: Date.now(), stats: { sessions: 0, points: 0, tops: 0, flashes: 0, best: 0 } } } };
     await setDoc(doc(db, 'groups', id), g);
-    await reloadGroups();
     notify('Gruppe erstellt');
     await openGroup(id);
+  }
+
+  async function updateGroup(next) {
+    if (!activeGroup?.id) return;
+    await updateDoc(doc(db, 'groups', activeGroup.id), next);
+    notify('Gruppe gespeichert');
+  }
+
+  async function updateMemberRole(targetUid, nextRole) {
+    if (!activeGroup?.id || !targetUid) return;
+    const currentMember = activeGroup.members?.[user.uid];
+    const targetMember = activeGroup.members?.[targetUid];
+    const amAdmin = activeGroup.createdBy === user.uid || currentMember?.role === 'owner' || currentMember?.role === 'admin';
+    if (!amAdmin) return notify('Nur Admins dürfen Rollen verwalten');
+    if (!targetMember?.active) return notify('Mitglied nicht gefunden');
+    if (targetMember.role === 'guest') return notify('Gäste können keine Admin-Rechte bekommen');
+    if (targetUid === activeGroup.createdBy || targetMember.role === 'owner') return notify('Dem Ersteller können keine Rechte abgenommen werden');
+    if (!['admin', 'member'].includes(nextRole)) return;
+    await updateDoc(doc(db, 'groups', activeGroup.id), { [`members.${targetUid}.role`]: nextRole });
+    notify(nextRole === 'admin' ? 'Admin-Rechte vergeben' : 'Admin-Rechte entfernt');
+  }
+
+  async function deleteActiveGroup() {
+    if (!activeGroup?.id) return;
+    if (activeGroup.createdBy !== user.uid) return notify('Nur der Ersteller kann die Gruppe löschen');
+    const sq = query(collection(db, 'sessions'), where('groupId', '==', activeGroup.id));
+    const ss = await getDocs(sq);
+    await Promise.all(ss.docs.map((d) => deleteDoc(doc(db, 'sessions', d.id))));
+    await deleteDoc(doc(db, 'groups', activeGroup.id));
+    localStorage.removeItem('bb-current-view');
+    localStorage.removeItem('bb-active-session');
+    setActiveGroup(null);
+    setActiveSession(null);
+    setSessions([]);
+    setScreen('home');
+    notify('Gruppe gelöscht');
   }
 
   async function joinGroup() {
@@ -89,7 +227,6 @@ export default function App() {
     if (snaps.empty) return notify('Gruppe nicht gefunden');
     const s = snaps.docs[0];
     await updateDoc(doc(db, 'groups', s.id), { [`members.${user.uid}`]: { uid: user.uid, name: safeName(), avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon, role: 'member', active: true, joinedAt: Date.now(), stats: { sessions: 0, points: 0, tops: 0, flashes: 0, best: 0 } } });
-    await reloadGroups();
     await openGroup(s.id);
   }
 
@@ -103,36 +240,73 @@ export default function App() {
   async function createSession() {
     const participants = {};
     const members = setup.kind === 'group' ? Object.values(activeGroup.members || {}).filter((m) => m.active) : [{ uid: user.uid, name: safeName(), avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon }];
-    members.filter((m) => setup.selected[m.uid]).forEach((m, i) => { participants[m.uid] = { uid: m.uid, name: m.name, avatarColor: m.avatarColor, avatarIcon: m.avatarIcon, isGuest: false, team: setup.mode === 'team' ? (i % 2 ? 'Team B' : 'Team A') : null, routes: emptyRouteState(ROUTES), routeLog: [], totalScore: 0, routesSolved: 0, flashCount: 0 }; });
-    setup.guests.forEach((name, i) => { const uid = `guest-${crypto.randomUUID()}`; participants[uid] = { uid, name, avatarColor: '#64748b', avatarIcon: '👤', isGuest: true, team: setup.mode === 'team' ? (i % 2 ? 'Team B' : 'Team A') : null, routes: emptyRouteState(ROUTES), routeLog: [], totalScore: 0, routesSolved: 0, flashCount: 0 }; });
+    members.filter((m) => setup.selected[m.uid]).forEach((m, i) => { participants[m.uid] = { uid: m.uid, name: m.name, avatarColor: m.avatarColor, avatarIcon: m.avatarIcon, isGuest: false, team: setup.mode === 'team' ? (i % 2 ? 'Team B' : 'Team A') : null, routes: emptyRouteState(ROUTES), routeLog: [], totalScore: 0, routesSolved: 0, flashCount: 0, zoneCount: 0 }; });
+    setup.guests.forEach((name, i) => { const uid = `guest-${crypto.randomUUID()}`; participants[uid] = { uid, name, avatarColor: '#64748b', avatarIcon: '👤', isGuest: true, team: setup.mode === 'team' ? (i % 2 ? 'Team B' : 'Team A') : null, routes: emptyRouteState(ROUTES), routeLog: [], totalScore: 0, routesSolved: 0, flashCount: 0, zoneCount: 0 }; });
     if (!Object.keys(participants).length) return notify('Keine Teilnehmer ausgewählt');
     const id = code(4);
     await setDoc(doc(db, 'sessions', id), { code: id, title: setup.title, groupId: setup.kind === 'group' ? activeGroup.id : null, groupName: setup.kind === 'group' ? activeGroup.name : 'Freie Runde', mode: setup.mode, timerMinutes: Number(setup.minutes) || 45, createdBy: user.uid, createdAt: serverTimestamp(), createdAtMillis: Date.now(), status: 'active', startedAt: Date.now(), participants });
-    listenSession(id);
+    listenSession(id, true);
     setScreen('game');
   }
 
-  function listenSession(id) {
-    return onSnapshot(doc(db, 'sessions', id), (s) => s.exists() && setActiveSession({ id: s.id, ...s.data() }));
+  function listenSession(id, remember = false) {
+    if (remember) localStorage.setItem('bb-active-session', id);
+    return onSnapshot(doc(db, 'sessions', id), (s) => {
+      if (!s.exists()) {
+        localStorage.removeItem('bb-active-session');
+        localStorage.removeItem('bb-current-view');
+        setActiveSession(null);
+        setScreen('home');
+        return;
+      }
+      const data = { id: s.id, ...s.data() };
+      setActiveSession(data);
+      if (data.status === 'finished') {
+        localStorage.removeItem('bb-active-session');
+        setScreen('results');
+      }
+    });
   }
 
-  async function updateRoute(uid, routeIndex, patch) {
+  async function updateRoute(uid, routeIndex, action) {
+    if (!activeSession || activeSession.status !== 'active') return notify('Session ist beendet');
     const p = structuredClone(activeSession.participants[uid]);
-    p.routes[routeIndex] = { ...p.routes[routeIndex], ...patch };
-    if (patch.solved && p.routes[routeIndex].attempts === 0) p.routes[routeIndex].attempts = 1;
-    if (patch.zone && p.routes[routeIndex].attempts === 0) p.routes[routeIndex].attempts = 1;
-    if (patch.solved) p.routes[routeIndex].zone = true;
-    p.routeLog = [...(p.routeLog || []), { routeIndex, type: patch.solved ? 'top' : patch.zone ? 'zone' : 'attempt', attempts: p.routes[routeIndex].attempts, at: Date.now() }].slice(-80);
+    const rd = { ...p.routes[routeIndex] };
+    if (rd.solved) return notify('Top ist gespeichert und unveränderlich');
+
+    if (action === 'attempt') {
+      if (activeSession.mode === 'bonus') return notify('Im Bonusmodus werden keine Versuche gezählt');
+      const max = activeSession.mode === 'comp' ? 12 : 99;
+      if (rd.attempts >= max) return notify(activeSession.mode === 'comp' ? 'Maximal 12 Versuche im Comp-Modus' : 'Maximum erreicht');
+      rd.attempts += 1;
+    }
+    if (action === 'zone') {
+      if (activeSession.mode !== 'bonus' && rd.attempts === 0) rd.attempts = 1;
+      rd.zone = true;
+      rd.zoneAt = rd.zoneAt || Date.now();
+    }
+    if (action === 'top') {
+      if (activeSession.mode !== 'bonus' && rd.attempts === 0) rd.attempts = 1;
+      rd.solved = true;
+      rd.zone = false;
+      rd.topAt = Date.now();
+      rd.locked = true;
+    }
+
+    p.routes[routeIndex] = rd;
+    p.routeLog = [...(p.routeLog || []), { routeIndex, type: action, attempts: rd.attempts, at: Date.now() }].slice(-80);
     const next = recalcParticipant(p, activeSession.mode);
     await updateDoc(doc(db, 'sessions', activeSession.id), { [`participants.${uid}`]: next });
   }
 
   async function finishSession() {
+    if (!activeSession || activeSession.status === 'finished') return;
     const results = activeSession.participants;
     await updateDoc(doc(db, 'sessions', activeSession.id), { status: 'finished', endedAt: Date.now(), results });
+    localStorage.removeItem('bb-active-session');
     const me = results[user.uid];
     if (me) {
-      const hist = { id: activeSession.id, title: activeSession.title, groupName: activeSession.groupName, mode: activeSession.mode, endedAt: Date.now(), points: me.totalScore || 0, tops: me.routesSolved || 0, flashes: me.flashCount || 0, successRate: Math.round(((me.routesSolved || 0) / ROUTES.length) * 100), routeLog: me.routeLog || [] };
+      const hist = { id: activeSession.id, title: activeSession.title, groupName: activeSession.groupName, mode: activeSession.mode, endedAt: Date.now(), points: me.totalScore || 0, tops: me.routesSolved || 0, flashes: me.flashCount || 0, zones: me.zoneCount || 0, successRate: Math.round(((me.routesSolved || 0) / ROUTES.length) * 100), routeLog: me.routeLog || [] };
       const nextProfile = { ...profile, sessions: (profile.sessions || 0) + 1, points: (profile.points || 0) + (me.totalScore || 0), tops: (profile.tops || 0) + (me.routesSolved || 0), flashes: (profile.flashes || 0) + (me.flashCount || 0), matchHistory: [hist, ...(profile.matchHistory || [])].slice(0, 30) };
       setProfile(nextProfile);
       await setDoc(doc(db, 'users', user.uid), nextProfile, { merge: true });
@@ -156,51 +330,226 @@ export default function App() {
     setProfile(next); notify('Profil gespeichert');
   }
 
-  if (screen === 'loading') return <div className="screen active"><div style={{ margin: 'auto' }}><div className="logo">Boulder<em>Base</em></div><div className="spinner mt16" /></div></div>;
-  if (!user || screen === 'auth') return <AuthScreen />;
+  if (screen === 'loading') return <div className="screen active"><div style={{ margin: 'auto' }}><div className="logo">Boulder<em>Base</em></div></div></div>;
+  if (screen === 'auth') return <AuthScreen />;
+  if (!user || !profile) return null;
 
   return <div className="app-shell">
     {toast && <div className="toast show">{toast}</div>}
-    {screen === 'home' && <Home profile={profile} groups={groups} onProfile={() => setScreen('profile')} onCreateGroup={createGroup} onJoinGroup={joinGroup} onOpenGroup={openGroup} onFree={() => startSetup('standalone')} onLogout={() => signOut(auth)} />}
+    {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
+    {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} logout={() => signOut(auth)} />}
     {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} />}
-    {screen === 'group' && <Group group={activeGroup} sessions={sessions} back={() => setScreen('home')} invite={() => navigator.clipboard.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} />}
-    {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
+    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} editGroup={updateGroup} updateMemberRole={updateMemberRole} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} />}
+    {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
     {screen === 'game' && activeSession && <Game session={activeSession} user={user} updateRoute={updateRoute} finish={finishSession} />}
-    {screen === 'results' && activeSession && <Results session={activeSession} back={() => setScreen(activeSession.groupId ? 'group' : 'home')} />}
+    {screen === 'results' && activeSession && <Results session={activeSession} back={() => activeSession.groupId ? openGroup(activeSession.groupId) : setScreen('home')} />}
   </div>;
 }
 
-function Home({ profile, groups, onProfile, onCreateGroup, onJoinGroup, onOpenGroup, onFree, onLogout }) {
-  return <main className="screen active" id="screen-home"><div className="topbar"><div><div className="logo">Boulder<em>Base</em></div><div className="tag">Hallo, {profile.name}!</div></div><button className="back-btn" onClick={onProfile}>👤 Profil</button></div><div className="card" style={{ background: 'var(--accent)', borderColor: 'transparent' }}><div className="card-title" style={{ color: 'rgba(255,255,255,.55)' }}>Schnellstart</div><button className="btn btn-ice" onClick={onFree}>Freie Runde starten</button><button className="btn" style={{ background: 'rgba(255,255,255,.10)', color: '#fff', border: '1px solid rgba(255,255,255,.2)' }} onClick={onCreateGroup}>Gruppe erstellen</button><button className="btn" style={{ background: 'rgba(255,255,255,.10)', color: '#fff', border: '1px solid rgba(255,255,255,.2)' }} onClick={onJoinGroup}>Gruppe beitreten</button></div><div className="card"><div className="card-title">Meine Gruppen</div><div className="list">{groups.length ? groups.map((g) => <div key={g.id} className="list-item" onClick={() => onOpenGroup(g.id)}><div className="row"><Avatar profile={g} className="group" /><div><h3>{g.name}</h3><div className="sub">{g.description || 'Keine Beschreibung'} · {Object.keys(g.members || {}).length} Mitglieder</div></div></div></div>) : <div className="empty">Noch keine Gruppe.</div>}</div></div><div className="spacer" /><button className="btn btn-secondary" onClick={onLogout}>Abmelden</button></main>;
+function Home({ profile, groups, openGroup, createGroup, joinGroup, startFree, setScreen, logout }) {
+  const displayName = profile?.name || 'Gast';
+  return <main className="screen active">
+    <div className="topbar">
+      <div className="logo">Boulder<em>Base</em></div>
+      <div className="topbar-actions">
+        <button className="profile-chip" onClick={() => setScreen('profile')} aria-label="Profil öffnen">
+          <Avatar profile={profile} className="ice" />
+          <span>Profil</span>
+        </button>
+        <button className="back-btn" onClick={logout}>Logout</button>
+      </div>
+    </div>
+    <HomeAddons setScreen={setScreen} />
+    <div className="card welcome-card">
+      <div className="tag">Willkommen zurück</div>
+      <h2>Hi {displayName} 👋</h2>
+      <div className="sub">{profile?.status || 'Bereit für die nächste Boulder-Session?'}</div>
+    </div>
+    <div className="card quickstart-card">
+      <div className="card-title">Schnellstart</div>
+      <button className="btn btn-primary" onClick={startFree}>Freie Runde starten</button>
+    </div>
+    <div className="card"><div className="card-title">Gruppen</div><button className="btn btn-primary mb8" onClick={createGroup}>+ Gruppe erstellen</button><button className="btn btn-secondary mb12" onClick={joinGroup}>Gruppe beitreten</button>{groups.length ? groups.map((g) => <div className="list-item clickable" key={g.id} onClick={() => openGroup(g.id)}><div className="row"><Avatar profile={g} className="group" /><div><h3>{g.name}</h3><div className="sub">{Object.values(g.members || {}).filter((m) => m.active).length} Mitglieder · Code {g.code}</div></div></div></div>) : <div className="empty">Noch keine Gruppe.</div>}</div>
+    <div className="card"><div className="card-title">Freunde</div><div className="sub mb12">Freunde suchen, Anfragen verwalten und Profile öffnen.</div><button className="btn btn-secondary" onClick={() => setScreen('friends')}>👥 Freunde öffnen</button></div>
+  </main>;
+}
+
+
+function PersonalizeModal({ title, value, descriptionLabel = 'Beschreibung', onClose, onSave }) {
+  const [draft, setDraft] = useState({
+    name: value?.name || '',
+    description: value?.description ?? value?.status ?? '',
+    avatarColor: value?.avatarColor || '#2D3142',
+    avatarIcon: value?.avatarIcon || '🪨'
+  });
+  function save() {
+    onSave({
+      name: draft.name.trim() || value?.name || 'Unbenannt',
+      description: draft.description.trim(),
+      avatarColor: draft.avatarColor,
+      avatarIcon: draft.avatarIcon
+    });
+    onClose();
+  }
+  return <div className="modal-backdrop" onClick={onClose}>
+    <div className="personalize-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-head"><div><div className="tag">Personalisieren</div><h2>{title}</h2></div><button className="modal-close" onClick={onClose}>×</button></div>
+      <div className="modal-preview"><Avatar profile={draft} className="big" /><div><strong>{draft.name || 'Name'}</strong><div className="sub">{draft.description || descriptionLabel}</div></div></div>
+      <div className="modal-section"><label>Name</label><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Name eingeben" /></div>
+      <div className="modal-section"><label>{descriptionLabel}</label><textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder={`${descriptionLabel} eingeben`} rows="3" /></div>
+      <div className="modal-section"><label>Icon</label><div className="avatar-picker modal-picker">{AVATAR_ICONS.map((i) => <button type="button" key={i} className={`avatar-choice ${draft.avatarIcon === i ? 'active' : ''}`} onClick={() => setDraft({ ...draft, avatarIcon: i })}>{i}</button>)}</div></div>
+      <div className="modal-section"><label>Farbe</label><div className="avatar-picker modal-picker">{AVATAR_COLORS.map((c) => <button type="button" key={c} className={`avatar-choice color-choice ${draft.avatarColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => setDraft({ ...draft, avatarColor: c })}>{draft.avatarColor === c ? '✓' : ''}</button>)}</div></div>
+      <div className="modal-actions"><button className="btn btn-secondary" onClick={onClose}>Abbrechen</button><button className="btn btn-primary" onClick={save}>Speichern</button></div>
+    </div>
+  </div>;
 }
 
 function Profile({ profile, setProfile, saveProfile, metric, setMetric, back }) {
-  const h = profile.matchHistory || [];
-  const cfg = { points: ['points', 'Pkt', 'Durchschnittliche Punkte pro Runde'], tops: ['tops', 'Tops', 'Durchschnittliche Tops pro Runde'], flashes: ['flashes', 'Flash', 'Durchschnittliche Flashes pro Runde'], success: ['successRate', '%', 'Durchschnittliche Erfolgsquote pro Runde'] }[metric];
-  const avg = h.length ? h.reduce((a, m) => a + Number(m[cfg[0]] || 0), 0) / h.length : 0;
-  return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={back}>← zurück</button><div className="logo" style={{ fontSize: 18 }}>Profil</div></div><div className="card tc"><Avatar profile={profile} className="big" /><h2>{profile.name}</h2><div className="sub">{profile.status || 'Noch kein Status'}</div></div><div className="stat-grid"><Stat n={profile.sessions || 0} l="Sessions" /><Stat n={profile.tops || 0} l="Tops" /><Stat n={profile.flashes || 0} l="Flashes" /><Stat n={profile.points || 0} l="Punkte" /></div><div className="card"><div className="card-title">Auswertungen</div><label>Statistik auswählen</label><select value={metric} onChange={(e) => setMetric(e.target.value)}><option value="points">Ø Punkte pro Runde</option><option value="tops">Ø Tops pro Runde</option><option value="flashes">Ø Flashes pro Runde</option><option value="success">Ø Erfolgsquote pro Runde</option></select><div className="chart-box mt12"><div className="profile-summary-card"><div className="profile-summary-value">{cfg[1] === '%' ? Math.round(avg) + '%' : Math.round(avg)}</div><div className="profile-summary-label">{cfg[2]}</div><div className="profile-summary-sub">Basis: {h.length} Runde{h.length === 1 ? '' : 'n'}</div></div></div></div><div className="card"><div className="card-title">Vergangene Matches</div>{h.length ? h.map((m) => <div className="list-item" key={m.id}><h3>{m.title}</h3><div className="sub">{safeDate(m.endedAt)} · {m.groupName} · {m.points} Punkte · {m.tops} Tops</div></div>) : <div className="empty">Noch keine vergangenen Matches.</div>}</div><div className="card"><div className="card-title">Profil bearbeiten</div><label>Name</label><input value={profile.name || ''} onChange={(e) => setProfile({ ...profile, name: e.target.value })} className="mb8" /><label>Status</label><input value={profile.status || ''} onChange={(e) => setProfile({ ...profile, status: e.target.value })} className="mb8" /><label>Icon</label><div className="avatar-picker">{AVATAR_ICONS.map((i) => <button key={i} className="avatar-choice" onClick={() => setProfile({ ...profile, avatarIcon: i })}>{i}</button>)}</div><label>Farbe</label><div className="avatar-picker">{AVATAR_COLORS.map((c) => <button key={c} className={`avatar-choice ${profile.avatarColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => setProfile({ ...profile, avatarColor: c })}>✓</button>)}</div><button className="btn btn-primary mt12" onClick={() => saveProfile()}>Speichern</button></div></main>;
+  const [personalizeOpen, setPersonalizeOpen] = useState(false);
+  const history = profile.matchHistory || [];
+  const avg = history.length ? Math.round(history.reduce((a, m) => a + (m.points || 0), 0) / history.length) : 0;
+  const avgTops = history.length ? (history.reduce((a, m) => a + (m.tops || 0), 0) / history.length).toFixed(1) : '0.0';
+  const avgZones = history.length ? (history.reduce((a, m) => a + (m.zones || 0), 0) / history.length).toFixed(1) : '0.0';
+  const values = { points: [avg, 'Ø Punkte pro Runde', `${history.length} gespielte Runden`], tops: [avgTops, 'Ø Tops pro Runde', `${profile.tops || 0} Tops gesamt`], zones: [avgZones, 'Ø Zones pro Runde', 'Zones zählen nur, solange kein Top erreicht wurde'] };
+  function savePersonalization(next) {
+    const updated = { ...profile, name: next.name, status: next.description, avatarColor: next.avatarColor, avatarIcon: next.avatarIcon };
+    setProfile(updated);
+    saveProfile(updated);
+  }
+  return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={back}>← zurück</button><div className="logo" style={{ fontSize: 18 }}>Profil</div></div>
+    <div className="card profile-edit-card"><div className="profile-edit-head"><Avatar profile={profile} className="big" /><div><h2>{profile.name}</h2><div className="sub">{profile.status || 'Keine Beschreibung'}</div></div></div><button className="btn btn-secondary mt12 full-mobile" onClick={() => setPersonalizeOpen(true)}>Profil personalisieren</button></div>
+    <div className="tabs"><button className={`tab ${metric === 'points' ? 'active' : ''}`} onClick={() => setMetric('points')}>Punkte</button><button className={`tab ${metric === 'tops' ? 'active' : ''}`} onClick={() => setMetric('tops')}>Tops</button><button className={`tab ${metric === 'zones' ? 'active' : ''}`} onClick={() => setMetric('zones')}>Zones</button></div><div className="card chart-box"><div className="profile-summary-card"><div className="profile-summary-value">{(values[metric] || values.points)[0]}</div><div className="profile-summary-label">{(values[metric] || values.points)[1]}</div><div className="profile-summary-sub">{(values[metric] || values.points)[2]}</div></div></div><div className="card"><div className="card-title">Letzte Matches</div>{history.length ? history.map((m) => <div className="list-item" key={m.id}><h3>{m.title}</h3><div className="sub">{safeDate(m.endedAt)} · {m.groupName} · {m.points} Punkte · {m.tops} Tops</div></div>) : <div className="empty">Noch keine vergangenen Matches.</div>}</div>
+    {personalizeOpen && <PersonalizeModal title="Profil anpassen" value={{ ...profile, description: profile.status || '' }} descriptionLabel="Beschreibung" onClose={() => setPersonalizeOpen(false)} onSave={savePersonalization} />}
+  </main>;
 }
 
-function Group({ group, sessions, back, invite, start }) {
+function Group({ group, sessions, back, invite, start, editGroup, updateMemberRole, deleteGroup, currentUid, openSession }) {
+  const [personalizeOpen, setPersonalizeOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteName, setDeleteName] = useState('');
+  const [selectedMemberUid, setSelectedMemberUid] = useState(null);
   const members = Object.values(group.members || {}).filter((m) => m.active);
   const totalPoints = members.reduce((a, m) => a + (m.stats?.points || 0), 0);
   const totalTops = members.reduce((a, m) => a + (m.stats?.tops || 0), 0);
-  return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={back}>← Gruppen</button><button className="back-btn" onClick={invite}>Code kopieren</button></div><div className="card"><div className="row"><Avatar profile={group} className="group big" /><div><div className="logo" style={{ fontSize: 24 }}>{group.name}</div><div className="sub">{group.description || `Code: ${group.code}`}</div></div></div><div className="mt12 row"><button className="btn btn-primary" onClick={start}>Neue Session</button><button className="btn btn-secondary" onClick={invite}>Einladen</button></div></div><div className="stat-grid"><Stat n={members.length} l="Mitglieder" /><Stat n={sessions.filter((s) => s.status === 'finished').length} l="Sessions" /><Stat n={totalTops} l="Tops" /><Stat n={totalPoints} l="Punkte" /></div><div className="card"><div className="card-title">Leaderboard</div>{members.sort((a, b) => (b.stats?.points || 0) - (a.stats?.points || 0)).map((m, i) => <div className="lb-row" key={m.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={m} className="ice" /><div className="lb-name">{m.name}</div><div className="lb-score">{m.stats?.points || 0}</div></div>)}</div><div className="card"><div className="card-title">Historie</div>{sessions.length ? sessions.map((s) => <div className="list-item" key={s.id}><h3>{s.title}</h3><div className="sub">{safeDate(s.createdAtMillis)} · {s.mode} · {Object.keys(s.participants || {}).length} Teilnehmer · {s.status}</div></div>) : <div className="empty">Noch keine Sessions gespeichert.</div>}</div></main>;
+  const myRole = group.members?.[currentUid]?.role;
+  const canManageRoles = group.createdBy === currentUid || myRole === 'owner' || myRole === 'admin';
+  const canEdit = canManageRoles;
+  const canDeleteGroup = group.createdBy === currentUid;
+
+  function roleLabel(role, uid) {
+    if (uid === group.createdBy || role === 'owner') return 'Ersteller';
+    if (role === 'admin') return 'Admin';
+    if (role === 'guest') return 'Gast';
+    return 'Mitglied';
+  }
+
+  function saveGroupPersonalization(next) {
+    editGroup({ name: next.name, description: next.description, avatarIcon: next.avatarIcon, avatarColor: next.avatarColor });
+  }
+
+  const deleteNameMatches = deleteName.trim() === group.name;
+  async function confirmDeleteGroup() {
+    if (!deleteNameMatches) return;
+    await deleteGroup();
+    setDeleteOpen(false);
+    setDeleteName('');
+  }
+
+  return <main className="screen active">
+    <div className="topbar"><button className="back-btn" onClick={back}>← Gruppen</button><button className="back-btn" onClick={invite}>Code kopieren</button></div>
+
+    <div className="card">
+      <div className="row"><Avatar profile={group} className="group big" /><div><div className="logo" style={{ fontSize: 24 }}>{group.name}</div><div className="sub">{group.description || `Code: ${group.code}`}</div></div></div>
+      <div className="mt12 action-row"><button className="btn btn-primary" onClick={start}>Neue Session</button><button className="btn btn-secondary" onClick={invite}>Einladen</button>{canEdit && <button className="btn btn-secondary full-mobile" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div>
+    </div>
+
+    <div className="stat-grid"><Stat n={members.length} l="Mitglieder" /><Stat n={sessions.filter((s) => s.status === 'finished').length} l="Sessions" /><Stat n={totalTops} l="Tops" /><Stat n={totalPoints} l="Punkte" /></div>
+
+    <div className="card">
+      <div className="card-title">Gruppenmitglieder</div>
+      {canManageRoles && <div className="sub mb12">Tippe auf ein anderes Mitglied, um Details und Rollenoptionen zu öffnen.</div>}
+      {members.map((m) => {
+        const isOwner = m.uid === group.createdBy || m.role === 'owner';
+        const isAdmin = m.role === 'admin';
+        const isGuest = m.role === 'guest';
+        const canOpenRoleMenu = canManageRoles && m.uid !== currentUid;
+        const isSelected = canOpenRoleMenu && selectedMemberUid === m.uid;
+        const canChangeThisRole = canOpenRoleMenu && !isOwner && !isGuest;
+        return <div className={`member-role-card ${isSelected ? 'open' : ''} ${!canOpenRoleMenu ? 'locked' : ''}`} key={m.uid}>
+          <button type="button" className="member-role-summary" disabled={!canOpenRoleMenu} onClick={() => setSelectedMemberUid(isSelected ? null : m.uid)}>
+            <div className="row"><Avatar profile={m} className="ice" /><div><h3>{m.name}{m.uid === currentUid ? ' (du)' : ''}</h3><div className="sub">{roleLabel(m.role, m.uid)}</div></div></div>
+            {canOpenRoleMenu && <span className="member-role-chevron">{isSelected ? '−' : '+'}</span>}
+          </button>
+          {isSelected && <div className="member-role-panel">
+            <div className="sub">Aktuelle Rolle: <strong>{roleLabel(m.role, m.uid)}</strong></div>
+            {isOwner && <div className="notice small-notice">Der Ersteller bleibt immer Admin und kann nicht geändert werden.</div>}
+            {isGuest && <div className="notice small-notice">Gastspieler können keine Admin-Rechte bekommen.</div>}
+            {canChangeThisRole && <div className="role-actions role-actions-panel">
+              {isAdmin
+                ? <button className="tiny-btn" onClick={() => updateMemberRole(m.uid, 'member')}>Zu Mitglied machen</button>
+                : <button className="tiny-btn" onClick={() => updateMemberRole(m.uid, 'admin')}>Zum Admin machen</button>}
+            </div>}
+          </div>}
+        </div>;
+      })}
+
+      {canDeleteGroup && <div className="delete-group-area compact-delete-area">
+        <button type="button" className="link-danger-btn subtle-delete-btn" onClick={() => { setDeleteName(''); setDeleteOpen(true); }}>Gruppe löschen</button>
+      </div>}
+    </div>
+
+    <div className="card"><div className="card-title">Leaderboard</div>{members.sort((a, b) => (b.stats?.points || 0) - (a.stats?.points || 0)).map((m, i) => <div className="lb-row" key={m.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={m} className="ice" /><div className="lb-name">{m.name}</div><div className="lb-score">{m.stats?.points || 0}</div></div>)}</div>
+    <div className="card"><div className="card-title">Historie</div>{sessions.length ? sessions.map((s) => <div className="list-item clickable" key={s.id} onClick={() => s.status === 'active' && openSession(s.id)}><h3>{s.title}</h3><div className="sub">{safeDate(s.createdAtMillis)} · {s.mode} · {Object.keys(s.participants || {}).length} Teilnehmer · {s.status}</div></div>) : <div className="empty">Noch keine Sessions gespeichert.</div>}</div>
+    {deleteOpen && <div className="delete-popup-backdrop" onClick={() => { setDeleteOpen(false); setDeleteName(''); }}>
+      <div className="delete-popup" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-confirm-title compact-delete-title">Gruppe löschen</div>
+        <p className="sub">Diese Aktion löscht die Gruppe und die zugehörigen Sessions. Zum Bestätigen bitte den Gruppennamen eingeben.</p>
+        <div className="delete-confirm-name compact-delete-name">{group.name}</div>
+        <input className="input compact-delete-input" value={deleteName} onChange={(e) => setDeleteName(e.target.value)} placeholder="Gruppenname" autoFocus />
+        <div className="compact-delete-actions"><button type="button" className="tiny-btn" onClick={() => { setDeleteOpen(false); setDeleteName(''); }}>Abbrechen</button><button type="button" className="tiny-btn danger-tiny-btn" disabled={!deleteNameMatches} onClick={confirmDeleteGroup}>Endgültig löschen</button></div>
+      </div>
+    </div>}
+    {personalizeOpen && <PersonalizeModal title="Gruppe anpassen" value={group} descriptionLabel="Beschreibung" onClose={() => setPersonalizeOpen(false)} onSave={saveGroupPersonalization} />}
+  </main>;
 }
 
-function Setup({ setup, setSetup, group, profile, back, create }) {
-  const members = setup.kind === 'group' ? Object.values(group.members || {}).filter((m) => m.active) : [{ uid: 'me', name: profile.name, avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon }];
+
+function Setup({ setup, setSetup, group, profile, user, back, create }) {
+  const members = setup.kind === 'group' ? Object.values(group.members || {}).filter((m) => m.active) : [{ uid: user.uid, name: profile.name, avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon }];
   return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={back}>← zurück</button><div className="logo" style={{ fontSize: 18 }}>Session Setup</div></div><div className="card"><label>Session Name</label><input value={setup.title} onChange={(e) => setSetup({ ...setup, title: e.target.value })} className="mb8" /><div className="row"><div><label>Modus</label><select value={setup.mode} onChange={(e) => setSetup({ ...setup, mode: e.target.value })}>{Object.keys(MODE_RULES).map((m) => <option key={m} value={m}>{m}</option>)}</select></div><div><label>Zeitlimit</label><input type="number" value={setup.minutes} onChange={(e) => setSetup({ ...setup, minutes: e.target.value })} /></div></div><div className="quick-time-grid">{[30,45,60,90,120].map((m) => <button key={m} className={`quick-time-btn ${Number(setup.minutes) === m ? 'active' : ''}`} onClick={() => setSetup({ ...setup, minutes: m })}>{m} min</button>)}</div></div><div className="card"><div className="card-title">Spielmodus-Regeln</div><div className="notice"><ul style={{ marginLeft: 18 }}>{MODE_RULES[setup.mode].map((r) => <li key={r}>{r}</li>)}</ul></div></div><div className="card"><div className="card-title">Teilnehmer</div>{members.map((m) => <label className="check-row" key={m.uid}><input type="checkbox" checked={!!setup.selected[m.uid]} onChange={(e) => setSetup({ ...setup, selected: { ...setup.selected, [m.uid]: e.target.checked } })} /><Avatar profile={m} className="ice" /><strong>{m.name}</strong></label>)}{setup.guests.map((g, i) => <div className="check-row" key={i}><div className="avatar">G</div><strong>{g}</strong></div>)}<button className="btn btn-secondary mt8" onClick={() => { const g = prompt('Name des Gastspielers?'); if (g) setSetup({ ...setup, guests: [...setup.guests, g] }); }}>+ Gastspieler hinzufügen</button></div><button className="btn btn-primary" onClick={create}>Session erstellen</button></main>;
 }
 
 function Game({ session, user, updateRoute, finish }) {
+  const [left, setLeft] = useState(secondsLeft(session));
   const me = session.participants[user.uid] || Object.values(session.participants)[0];
   const sorted = Object.values(session.participants).sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
-  return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={finish}>Beenden</button><div className="timer-pill">{session.timerMinutes}:00</div><span className="pill green">Live</span></div><div className="card"><div className="row"><div><div className="card-title">Deine Punkte</div><div className="stat-num">{me.totalScore || 0}</div></div><div><div className="card-title">Tops</div><div className="stat-num">{me.routesSolved || 0}</div></div></div></div><div className="card"><div className="card-title">Live Leaderboard</div>{sorted.map((p, i) => <div className="lb-row" key={p.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={p} className="ice" /><div className="lb-name">{p.name}</div><div className="lb-score">{p.totalScore || 0}</div></div>)}</div><div id="route-list">{COLORS.map((col) => <div key={col.key}><div className="card-title" style={{ marginTop: 12 }}>{col.label} · {col.difficulty} · {col.pts} Pkt</div>{ROUTES.map((r, i) => ({ r, i })).filter(({ r }) => r.key === col.key).map(({ r, i }) => <div className="route-row" style={{ borderLeftColor: col.hex }} key={r.id}><div className="route-info"><div className="route-name">Route {r.num}</div><div className="route-sub">{me.routes[i].attempts} Versuche · {me.routes[i].solved ? 'Top' : me.routes[i].zone ? 'Zone' : 'offen'}</div></div><div className="route-actions"><button className="tiny-btn" onClick={() => updateRoute(me.uid, i, { attempts: Math.max(0, me.routes[i].attempts - 1), solved: me.routes[i].attempts <= 1 ? false : me.routes[i].solved })}>−</button><span className="mono">{me.routes[i].attempts}</span><button className="tiny-btn" onClick={() => updateRoute(me.uid, i, { attempts: me.routes[i].attempts + 1 })}>+</button>{session.mode === 'comp' && <button className={`action-btn ${me.routes[i].zone && !me.routes[i].solved ? 'active' : ''}`} onClick={() => updateRoute(me.uid, i, { zone: !me.routes[i].zone })}>Zone</button>}<button className={`action-btn ${me.routes[i].solved ? 'active' : ''}`} onClick={() => updateRoute(me.uid, i, { solved: !me.routes[i].solved })}>Top</button></div></div>)}</div>)}</div></main>;
+  const teamScores = sorted.reduce((acc, p) => {
+    if (p.team) acc[p.team] = (acc[p.team] || 0) + (p.totalScore || 0);
+    return acc;
+  }, {});
+
+  useEffect(() => {
+    setLeft(secondsLeft(session));
+    const t = setInterval(() => setLeft(secondsLeft(session)), 1000);
+    return () => clearInterval(t);
+  }, [session.id, session.startedAt, session.timerMinutes]);
+
+  useEffect(() => {
+    if (session.status === 'active' && left <= 0) finish();
+  }, [left, session.status]);
+
+  return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={finish}>Beenden</button><div className={`timer-pill ${left <= 60 ? 'crit' : left <= 300 ? 'warn' : ''}`}>{formatTime(left)}</div><span className="pill green">Live</span></div><div className="card"><div className="row"><div><div className="card-title">Deine Punkte</div><div className="stat-num">{me.totalScore || 0}</div></div><div><div className="card-title">Tops</div><div className="stat-num">{me.routesSolved || 0}</div></div><div><div className="card-title">Zones</div><div className="stat-num">{me.zoneCount || 0}</div></div></div></div>{session.mode === 'team' && <div className="card"><div className="card-title">Teamwertung</div>{Object.entries(teamScores).sort((a, b) => b[1] - a[1]).map(([team, score]) => <div className="lb-row" key={team}><div className="lb-name">{team}</div><div className="lb-score">{score}</div></div>)}</div>}<div className="card"><div className="card-title">Live Leaderboard</div>{sorted.map((p, i) => <div className="lb-row" key={p.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={p} className="ice" /><div className="lb-name">{p.name}</div><div className="lb-score">{p.totalScore || 0}</div></div>)}</div><div id="route-list">{COLORS.map((col) => <div key={col.key}><div className="card-title" style={{ marginTop: 12 }}>{col.label} · {col.difficulty} · {col.pts} Pkt</div>{ROUTES.map((r, i) => ({ r, i })).filter(({ r }) => r.key === col.key).map(({ r, i }) => {
+    const rd = me.routes[i];
+    const locked = rd.solved;
+    const isBonus = session.mode === 'bonus';
+    const maxed = session.mode === 'comp' && rd.attempts >= 12;
+    const status = rd.solved ? 'Top gespeichert' : rd.zone ? `Zone · ${zonePoints(r)} Pkt` : 'offen';
+    return <div className="route-row" style={{ borderLeftColor: col.hex }} key={r.id}><div className="route-info"><div className="route-name">Route {r.num}</div><div className="route-sub">{isBonus ? status : `${rd.attempts} Versuche · ${status}`}</div></div><div className="route-actions">{!isBonus && <><button className="tiny-btn" disabled={locked || maxed} onClick={() => updateRoute(me.uid, i, 'attempt')}>+</button><span className="mono">{rd.attempts}{session.mode === 'comp' ? '/12' : ''}</span></>}<button className={`action-btn ${rd.zone && !rd.solved ? 'active' : ''}`} disabled={locked} onClick={() => updateRoute(me.uid, i, 'zone')}>Zone</button><button className={`action-btn ${rd.solved ? 'active' : ''}`} disabled={locked} onClick={() => updateRoute(me.uid, i, 'top')}>Top</button></div></div>;
+  })}</div>)}</div></main>;
 }
 
 function Results({ session, back }) {
   const rows = Object.values(session.results || session.participants || {}).sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
-  return <main className="screen active"><div className="tc" style={{ padding: '26px 0 18px' }}><div style={{ fontSize: 52 }}>🏆</div><div className="logo">Ergebnis</div><div className="tag">Session abgeschlossen</div></div><div className="card" style={{ padding: 0 }}>{rows.map((p, i) => <div className="lb-row" key={p.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={p} className="ice" /><div className="lb-name">{p.name}</div><div style={{ textAlign: 'right' }}><div className="lb-score">{p.totalScore || 0}</div><div className="sub">{p.routesSolved || 0} Tops · {p.flashCount || 0} Flash</div></div></div>)}</div><button className="btn btn-primary mt12" onClick={back}>Zurück</button></main>;
+  return <main className="screen active"><div className="tc" style={{ padding: '26px 0 18px' }}><div style={{ fontSize: 52 }}>🏆</div><div className="logo">Ergebnis</div><div className="tag">Session abgeschlossen</div></div><div className="card" style={{ padding: 0 }}>{rows.map((p, i) => <div className="lb-row" key={p.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={p} className="ice" /><div className="lb-name">{p.name}</div><div style={{ textAlign: 'right' }}><div className="lb-score">{p.totalScore || 0}</div><div className="sub">{p.routesSolved || 0} Tops · {p.zoneCount || 0} Zones</div></div></div>)}</div><button className="btn btn-primary mt12" onClick={back}>Zurück</button></main>;
 }
 function Stat({ n, l }) { return <div className="stat-box"><div className="stat-num">{n}</div><div className="stat-lbl">{l}</div></div>; }

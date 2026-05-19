@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
 import AuthScreen from './components/AuthScreen.jsx';
 import Avatar from './components/Avatar.jsx';
 import HomeAddons from './components/HomeAddons.jsx';
@@ -189,6 +189,36 @@ export default function App() {
     notify('Gruppe gespeichert');
   }
 
+  async function updateMemberRole(targetUid, nextRole) {
+    if (!activeGroup?.id || !targetUid) return;
+    const currentMember = activeGroup.members?.[user.uid];
+    const targetMember = activeGroup.members?.[targetUid];
+    const amAdmin = activeGroup.createdBy === user.uid || currentMember?.role === 'owner' || currentMember?.role === 'admin';
+    if (!amAdmin) return notify('Nur Admins dürfen Rollen verwalten');
+    if (!targetMember?.active) return notify('Mitglied nicht gefunden');
+    if (targetMember.role === 'guest') return notify('Gäste können keine Admin-Rechte bekommen');
+    if (targetUid === activeGroup.createdBy || targetMember.role === 'owner') return notify('Dem Ersteller können keine Rechte abgenommen werden');
+    if (!['admin', 'member'].includes(nextRole)) return;
+    await updateDoc(doc(db, 'groups', activeGroup.id), { [`members.${targetUid}.role`]: nextRole });
+    notify(nextRole === 'admin' ? 'Admin-Rechte vergeben' : 'Admin-Rechte entfernt');
+  }
+
+  async function deleteActiveGroup() {
+    if (!activeGroup?.id) return;
+    if (activeGroup.createdBy !== user.uid) return notify('Nur der Ersteller kann die Gruppe löschen');
+    const sq = query(collection(db, 'sessions'), where('groupId', '==', activeGroup.id));
+    const ss = await getDocs(sq);
+    await Promise.all(ss.docs.map((d) => deleteDoc(doc(db, 'sessions', d.id))));
+    await deleteDoc(doc(db, 'groups', activeGroup.id));
+    localStorage.removeItem('bb-current-view');
+    localStorage.removeItem('bb-active-session');
+    setActiveGroup(null);
+    setActiveSession(null);
+    setSessions([]);
+    setScreen('home');
+    notify('Gruppe gelöscht');
+  }
+
   async function joinGroup() {
     const groupCode = prompt('Gruppencode?')?.trim().toUpperCase();
     if (!groupCode) return;
@@ -309,7 +339,7 @@ export default function App() {
     {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
     {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} logout={() => signOut(auth)} />}
     {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} />}
-    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} editGroup={updateGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} />}
+    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} editGroup={updateGroup} updateMemberRole={updateMemberRole} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} />}
     {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
     {screen === 'game' && activeSession && <Game session={activeSession} user={user} updateRoute={updateRoute} finish={finishSession} />}
     {screen === 'results' && activeSession && <Results session={activeSession} back={() => activeSession.groupId ? openGroup(activeSession.groupId) : setScreen('home')} />}
@@ -393,19 +423,96 @@ function Profile({ profile, setProfile, saveProfile, metric, setMetric, back }) 
   </main>;
 }
 
-function Group({ group, sessions, back, invite, start, editGroup, currentUid, openSession }) {
+function Group({ group, sessions, back, invite, start, editGroup, updateMemberRole, deleteGroup, currentUid, openSession }) {
   const [personalizeOpen, setPersonalizeOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteName, setDeleteName] = useState('');
+  const [selectedMemberUid, setSelectedMemberUid] = useState(null);
   const members = Object.values(group.members || {}).filter((m) => m.active);
   const totalPoints = members.reduce((a, m) => a + (m.stats?.points || 0), 0);
   const totalTops = members.reduce((a, m) => a + (m.stats?.tops || 0), 0);
-  const canEdit = group.createdBy === currentUid || group.members?.[currentUid]?.role === 'owner';
+  const myRole = group.members?.[currentUid]?.role;
+  const canManageRoles = group.createdBy === currentUid || myRole === 'owner' || myRole === 'admin';
+  const canEdit = canManageRoles;
+  const canDeleteGroup = group.createdBy === currentUid;
+
+  function roleLabel(role, uid) {
+    if (uid === group.createdBy || role === 'owner') return 'Ersteller';
+    if (role === 'admin') return 'Admin';
+    if (role === 'guest') return 'Gast';
+    return 'Mitglied';
+  }
+
   function saveGroupPersonalization(next) {
     editGroup({ name: next.name, description: next.description, avatarIcon: next.avatarIcon, avatarColor: next.avatarColor });
   }
-  return <main className="screen active"><div className="topbar"><button className="back-btn" onClick={back}>← Gruppen</button><button className="back-btn" onClick={invite}>Code kopieren</button></div><div className="card"><div className="row"><Avatar profile={group} className="group big" /><div><div className="logo" style={{ fontSize: 24 }}>{group.name}</div><div className="sub">{group.description || `Code: ${group.code}`}</div></div></div><div className="mt12 action-row"><button className="btn btn-primary" onClick={start}>Neue Session</button><button className="btn btn-secondary" onClick={invite}>Einladen</button>{canEdit && <button className="btn btn-secondary full-mobile" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div></div><div className="stat-grid"><Stat n={members.length} l="Mitglieder" /><Stat n={sessions.filter((s) => s.status === 'finished').length} l="Sessions" /><Stat n={totalTops} l="Tops" /><Stat n={totalPoints} l="Punkte" /></div><div className="card"><div className="card-title">Leaderboard</div>{members.sort((a, b) => (b.stats?.points || 0) - (a.stats?.points || 0)).map((m, i) => <div className="lb-row" key={m.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={m} className="ice" /><div className="lb-name">{m.name}</div><div className="lb-score">{m.stats?.points || 0}</div></div>)}</div><div className="card"><div className="card-title">Historie</div>{sessions.length ? sessions.map((s) => <div className="list-item clickable" key={s.id} onClick={() => s.status === 'active' && openSession(s.id)}><h3>{s.title}</h3><div className="sub">{safeDate(s.createdAtMillis)} · {s.mode} · {Object.keys(s.participants || {}).length} Teilnehmer · {s.status}</div></div>) : <div className="empty">Noch keine Sessions gespeichert.</div>}</div>
+
+  const deleteNameMatches = deleteName.trim() === group.name;
+  async function confirmDeleteGroup() {
+    if (!deleteNameMatches) return;
+    await deleteGroup();
+    setDeleteOpen(false);
+    setDeleteName('');
+  }
+
+  return <main className="screen active">
+    <div className="topbar"><button className="back-btn" onClick={back}>← Gruppen</button><button className="back-btn" onClick={invite}>Code kopieren</button></div>
+
+    <div className="card">
+      <div className="row"><Avatar profile={group} className="group big" /><div><div className="logo" style={{ fontSize: 24 }}>{group.name}</div><div className="sub">{group.description || `Code: ${group.code}`}</div></div></div>
+      <div className="mt12 action-row"><button className="btn btn-primary" onClick={start}>Neue Session</button><button className="btn btn-secondary" onClick={invite}>Einladen</button>{canEdit && <button className="btn btn-secondary full-mobile" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div>
+    </div>
+
+    <div className="stat-grid"><Stat n={members.length} l="Mitglieder" /><Stat n={sessions.filter((s) => s.status === 'finished').length} l="Sessions" /><Stat n={totalTops} l="Tops" /><Stat n={totalPoints} l="Punkte" /></div>
+
+    <div className="card">
+      <div className="card-title">Gruppenmitglieder</div>
+      {canManageRoles && <div className="sub mb12">Tippe auf ein anderes Mitglied, um Details und Rollenoptionen zu öffnen.</div>}
+      {members.map((m) => {
+        const isOwner = m.uid === group.createdBy || m.role === 'owner';
+        const isAdmin = m.role === 'admin';
+        const isGuest = m.role === 'guest';
+        const canOpenRoleMenu = canManageRoles && m.uid !== currentUid;
+        const isSelected = canOpenRoleMenu && selectedMemberUid === m.uid;
+        const canChangeThisRole = canOpenRoleMenu && !isOwner && !isGuest;
+        return <div className={`member-role-card ${isSelected ? 'open' : ''} ${!canOpenRoleMenu ? 'locked' : ''}`} key={m.uid}>
+          <button type="button" className="member-role-summary" disabled={!canOpenRoleMenu} onClick={() => setSelectedMemberUid(isSelected ? null : m.uid)}>
+            <div className="row"><Avatar profile={m} className="ice" /><div><h3>{m.name}{m.uid === currentUid ? <span style={{fontSize:'0.8em',opacity:0.7,marginLeft:6}}>(Du)</span> : null}</h3><div className="sub">{roleLabel(m.role, m.uid)}</div></div></div>
+            {canOpenRoleMenu && <span className="member-role-chevron">{isSelected ? '−' : '+'}</span>}
+          </button>
+          {isSelected && <div className="member-role-panel">
+            <div className="sub">Aktuelle Rolle: <strong>{roleLabel(m.role, m.uid)}</strong></div>
+            {isOwner && <div className="notice small-notice">Der Ersteller bleibt immer Admin und kann nicht geändert werden.</div>}
+            {isGuest && <div className="notice small-notice">Gastspieler können keine Admin-Rechte bekommen.</div>}
+            {canChangeThisRole && <div className="role-actions role-actions-panel">
+              {isAdmin
+                ? <button className="tiny-btn" onClick={() => updateMemberRole(m.uid, 'member')}>Zu Mitglied machen</button>
+                : <button className="tiny-btn" onClick={() => updateMemberRole(m.uid, 'admin')}>Zum Admin machen</button>}
+            </div>}
+          </div>}
+        </div>;
+      })}
+
+      {canDeleteGroup && <div className="delete-group-area compact-delete-area">
+        <button type="button" className="link-danger-btn subtle-delete-btn" onClick={() => { setDeleteName(''); setDeleteOpen(true); }}>Gruppe löschen</button>
+      </div>}
+    </div>
+
+    <div className="card"><div className="card-title">Leaderboard</div>{members.sort((a, b) => (b.stats?.points || 0) - (a.stats?.points || 0)).map((m, i) => <div className="lb-row" key={m.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={m} className="ice" /><div className="lb-name">{m.name}</div><div className="lb-score">{m.stats?.points || 0}</div></div>)}</div>
+    <div className="card"><div className="card-title">Historie</div>{sessions.length ? sessions.map((s) => <div className="list-item clickable" key={s.id} onClick={() => s.status === 'active' && openSession(s.id)}><h3>{s.title}</h3><div className="sub">{safeDate(s.createdAtMillis)} · {s.mode} · {Object.keys(s.participants || {}).length} Teilnehmer · {s.status}</div></div>) : <div className="empty">Noch keine Sessions gespeichert.</div>}</div>
+    {deleteOpen && <div className="delete-popup-backdrop" onClick={() => { setDeleteOpen(false); setDeleteName(''); }}>
+      <div className="delete-popup" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-confirm-title compact-delete-title">Gruppe löschen</div>
+        <p className="sub">Diese Aktion löscht die Gruppe und die zugehörigen Sessions. Zum Bestätigen bitte den Gruppennamen eingeben.</p>
+        <div className="delete-confirm-name compact-delete-name">{group.name}</div>
+        <input className="input compact-delete-input" value={deleteName} onChange={(e) => setDeleteName(e.target.value)} placeholder="Gruppenname" autoFocus />
+        <div className="compact-delete-actions"><button type="button" className="tiny-btn" onClick={() => { setDeleteOpen(false); setDeleteName(''); }}>Abbrechen</button><button type="button" className="tiny-btn danger-tiny-btn" disabled={!deleteNameMatches} onClick={confirmDeleteGroup}>Endgültig löschen</button></div>
+      </div>
+    </div>}
     {personalizeOpen && <PersonalizeModal title="Gruppe anpassen" value={group} descriptionLabel="Beschreibung" onClose={() => setPersonalizeOpen(false)} onSave={saveGroupPersonalization} />}
   </main>;
 }
+
 
 function Setup({ setup, setSetup, group, profile, user, back, create }) {
   const members = setup.kind === 'group' ? Object.values(group.members || {}).filter((m) => m.active) : [{ uid: user.uid, name: profile.name, avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon }];
