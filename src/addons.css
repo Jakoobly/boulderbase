@@ -1,0 +1,22 @@
+/* src/addons.css - zusätzlich zu deiner bestehenden styles.css importieren */
+.quote-card {
+  background: linear-gradient(135deg, rgba(176,215,255,.55), rgba(255,255,255,.92));
+}
+.quote-text {
+  font-size: 17px;
+  line-height: 1.45;
+  font-weight: 800;
+  margin: 4px 0 8px;
+}
+.pwa-hint {
+  margin-bottom: 12px;
+}
+.friend-badge {
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 800;
+}
+.request-card {
+  background: var(--green-bg);
+  border-color: rgba(21,128,61,.22);
+}
