@@ -7,26 +7,44 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isGroupMember(groupId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && get(/databases/$(database)/documents/groups/$(groupId)).data.members[request.auth.uid].active == true;
+    }
+
     match /users/{uid} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow create, update: if isSelf(uid);
       allow delete: if false;
 
       match /friends/{friendUid} {
-        allow read, create, update, delete: if signedIn();
+        allow read: if isSelf(uid);
+        allow create, update, delete: if signedIn() && (request.auth.uid == uid || request.auth.uid == friendUid);
       }
     }
 
     match /friendRequests/{requestId} {
-      allow read, create, update, delete: if signedIn();
+      allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.fromUid == request.auth.uid;
+      allow update, delete: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
     }
 
     match /groups/{groupId} {
-      allow read, create, update, delete: if signedIn();
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if signedIn();
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
     }
 
     match /sessions/{sessionId} {
-      allow read, create, update: if signedIn();
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
       allow delete: if false;
     }
 
