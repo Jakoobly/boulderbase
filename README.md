@@ -30,7 +30,7 @@ This project started as a way to learn modern web development and gain hands-on 
 
 ## About This Project
 
-This is my **first larger JavaScript project** and my first deeper experience building a full web app.  
+This is my **first larger JavaScript project** build with AI and my first deeper experience building a full web app.  
 The goal is not only to create something useful for my climbing community, but also to continuously improve my skills in software development and modern web technologies.
 
 > Built with a lot of learning, experimenting, and probably a few bugs along the way :)
