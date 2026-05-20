@@ -72,6 +72,7 @@ export default function App() {
   const [groups, setGroups] = useState([]);
   const [activeGroup, setActiveGroup] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [challenges, setChallenges] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
   const [toast, setToast] = useState('');
   const [profileMetric, setProfileMetric] = useState('points');
@@ -127,11 +128,11 @@ export default function App() {
       }
     }
 
-    if (view?.screen === 'group' && view.groupId) {
+    if ((view?.screen === 'group' || view?.screen === 'challenges') && view.groupId) {
       const g = await getDoc(doc(db, 'groups', view.groupId));
       if (g.exists() && g.data()?.members?.[uid]?.active) {
         setActiveGroup({ id: g.id, ...g.data() });
-        setScreen('group');
+        setScreen(view.screen === 'challenges' ? 'challenges' : 'group');
         return;
       }
     }
@@ -163,7 +164,12 @@ export default function App() {
         setScreen('game');
       }
     });
-    return () => { unsubGroup(); unsubSessions(); };
+    const cq = query(collection(db, 'challenges'), where('groupId', '==', activeGroup.id));
+    const unsubChallenges = onSnapshot(cq, (cs) => {
+      const list = cs.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
+      setChallenges(list);
+    });
+    return () => { unsubGroup(); unsubSessions(); unsubChallenges(); };
   }, [activeGroup?.id, user?.uid, screen]);
 
   async function openGroup(id) {
@@ -208,7 +214,9 @@ export default function App() {
     if (activeGroup.createdBy !== user.uid) return notify('Nur der Ersteller kann die Gruppe löschen');
     const sq = query(collection(db, 'sessions'), where('groupId', '==', activeGroup.id));
     const ss = await getDocs(sq);
-    await Promise.all(ss.docs.map((d) => deleteDoc(doc(db, 'sessions', d.id))));
+    const cq = query(collection(db, 'challenges'), where('groupId', '==', activeGroup.id));
+    const cs = await getDocs(cq);
+    await Promise.all([...ss.docs.map((d) => deleteDoc(doc(db, 'sessions', d.id))), ...cs.docs.map((d) => deleteDoc(doc(db, 'challenges', d.id)))]);
     await deleteDoc(doc(db, 'groups', activeGroup.id));
     localStorage.removeItem('bb-current-view');
     localStorage.removeItem('bb-active-session');
@@ -325,6 +333,50 @@ export default function App() {
     setScreen('results');
   }
 
+  async function createChallenge(form) {
+    if (!activeGroup?.id) return;
+    const id = crypto.randomUUID();
+    const target = Math.max(1, Number(form.target) || 1);
+    await setDoc(doc(db, 'challenges', id), {
+      groupId: activeGroup.id,
+      groupName: activeGroup.name,
+      title: form.title.trim(),
+      dueDate: form.dueDate,
+      unit: form.unit.trim(),
+      target,
+      progressBy: {},
+      totalProgress: 0,
+      createdBy: user.uid,
+      createdAt: serverTimestamp(),
+      createdAtMillis: Date.now(),
+      status: 'active'
+    });
+    notify('Challenge erstellt');
+  }
+
+  async function addChallengeProgress(challenge, amount) {
+    if (!activeGroup?.id) return;
+    const myRole = activeGroup.members?.[user.uid]?.role;
+    const canAdmin = activeGroup.createdBy === user.uid || myRole === 'owner' || myRole === 'admin';
+    if (!canAdmin) return notify('Nur Admins können Challenge-Fortschritt eintragen');
+    const value = Math.max(0, Number(amount) || 0);
+    if (!challenge?.id || value <= 0) return notify('Bitte einen Fortschritt größer als 0 eingeben');
+    const current = Number(challenge.progressBy?.admin?.value || 0);
+    await updateDoc(doc(db, 'challenges', challenge.id), {
+      'progressBy.admin': { uid: user.uid, name: safeName(), avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon, value: current + value, updatedAt: Date.now() },
+      totalProgress: increment(value),
+      updatedBy: user.uid,
+      updatedAtMillis: Date.now()
+    });
+    notify('Fortschritt gespeichert');
+  }
+
+  async function deleteChallenge(challengeId) {
+    if (!challengeId) return;
+    await deleteDoc(doc(db, 'challenges', challengeId));
+    notify('Challenge gelöscht');
+  }
+
   async function saveProfile(next = profile) {
     await setDoc(doc(db, 'users', user.uid), next, { merge: true });
     setProfile(next); notify('Profil gespeichert');
@@ -339,7 +391,8 @@ export default function App() {
     {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
     {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} logout={() => signOut(auth)} />}
     {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} />}
-    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} editGroup={updateGroup} updateMemberRole={updateMemberRole} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} />}
+    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} openChallenges={() => setScreen('challenges')} editGroup={updateGroup} updateMemberRole={updateMemberRole} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} />}
+    {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}
     {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
     {screen === 'game' && activeSession && <Game session={activeSession} user={user} updateRoute={updateRoute} finish={finishSession} />}
     {screen === 'results' && activeSession && <Results session={activeSession} back={() => activeSession.groupId ? openGroup(activeSession.groupId) : setScreen('home')} />}
@@ -423,7 +476,7 @@ function Profile({ profile, setProfile, saveProfile, metric, setMetric, back }) 
   </main>;
 }
 
-function Group({ group, sessions, back, invite, start, editGroup, updateMemberRole, deleteGroup, currentUid, openSession }) {
+function Group({ group, sessions, challenges, back, invite, start, openChallenges, editGroup, updateMemberRole, deleteGroup, currentUid, openSession }) {
   const [personalizeOpen, setPersonalizeOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteName, setDeleteName] = useState('');
@@ -460,10 +513,12 @@ function Group({ group, sessions, back, invite, start, editGroup, updateMemberRo
 
     <div className="card">
       <div className="row"><Avatar profile={group} className="group big" /><div><div className="logo" style={{ fontSize: 24 }}>{group.name}</div><div className="sub">{group.description || `Code: ${group.code}`}</div></div></div>
-      <div className="mt12 action-row"><button className="btn btn-primary" onClick={start}>Neue Session</button><button className="btn btn-secondary" onClick={invite}>Einladen</button>{canEdit && <button className="btn btn-secondary full-mobile" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div>
+      <div className="mt12 action-row"><button className="btn btn-primary" onClick={start}>Neue Session</button><button className="btn btn-secondary" onClick={openChallenges}>Challenge</button><button className="btn btn-secondary" onClick={invite}>Einladen</button>{canEdit && <button className="btn btn-secondary full-mobile" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div>
     </div>
 
     <div className="stat-grid"><Stat n={members.length} l="Mitglieder" /><Stat n={sessions.filter((s) => s.status === 'finished').length} l="Sessions" /><Stat n={totalTops} l="Tops" /><Stat n={totalPoints} l="Punkte" /></div>
+
+    <div className="card"><div className="card-title">Challenges</div>{challenges?.length ? challenges.slice(0, 3).map((c) => <ChallengeMini key={c.id} challenge={c} />) : <div className="empty">Noch keine Challenge. Admins können über den Challenge-Button eine erstellen.</div>}<button className="btn btn-secondary mt8" onClick={openChallenges}>Alle Challenges öffnen</button></div>
 
     <div className="card">
       <div className="card-title">Gruppenmitglieder</div>
@@ -510,6 +565,63 @@ function Group({ group, sessions, back, invite, start, editGroup, updateMemberRo
       </div>
     </div>}
     {personalizeOpen && <PersonalizeModal title="Gruppe anpassen" value={group} descriptionLabel="Beschreibung" onClose={() => setPersonalizeOpen(false)} onSave={saveGroupPersonalization} />}
+  </main>;
+}
+
+
+function challengePercent(challenge) {
+  const total = Number(challenge.totalProgress || 0);
+  const target = Math.max(1, Number(challenge.target || 1));
+  return Math.min(100, Math.round((total / target) * 100));
+}
+
+function ChallengeMini({ challenge }) {
+  const percent = challengePercent(challenge);
+  return <div className="challenge-mini"><div className="challenge-mini-head"><strong>{challenge.title}</strong><span className="mono">{percent}%</span></div><div className="progress-track"><div className="progress-fill" style={{ width: `${percent}%` }} /></div><div className="sub">{Number(challenge.totalProgress || 0).toLocaleString('de-DE')} / {Number(challenge.target || 0).toLocaleString('de-DE')} {challenge.unit} · bis {safeDate(challenge.dueDate)}</div></div>;
+}
+
+function Challenges({ group, challenges, currentUid, back, createChallenge, addProgress, deleteChallenge }) {
+  const myRole = group.members?.[currentUid]?.role;
+  const canAdmin = group.createdBy === currentUid || myRole === 'owner' || myRole === 'admin';
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ title: '', dueDate: '2026-12-31', unit: 'min', target: 100 });
+  const [inputs, setInputs] = useState({});
+
+  async function submitChallenge(e) {
+    e.preventDefault();
+    if (!form.title.trim()) return;
+    if (!form.dueDate) return;
+    if (!form.unit.trim()) return;
+    await createChallenge(form);
+    setForm({ title: '', dueDate: '2026-12-31', unit: 'min', target: 100 });
+    setShowForm(false);
+  }
+
+  return <main className="screen active">
+    <div className="topbar"><button className="back-btn" onClick={back}>← Gruppe</button><div className="logo" style={{ fontSize: 22 }}>Challenges</div></div>
+    <div className="card"><div className="row"><Avatar profile={group} className="group" /><div><div className="card-title">Gruppe</div><h2>{group.name}</h2><div className="sub">Gemeinsame Ziele über mehrere Tage oder Wochen tracken.</div></div></div></div>
+
+    {canAdmin && <div className="card">
+      <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>{showForm ? 'Formular schließen' : '+ Challenge erstellen'}</button>
+      {showForm && <form className="challenge-form" onSubmit={submitChallenge}>
+        <label>Titel</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="z.B. Dead Hang Dezember" />
+        <div className="challenge-meta-grid mt8"><div><label>Läuft bis</label><input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></div><div><label>Einheit</label><input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="min / Anzahl" /></div></div>
+        <label className="mt8">Ziel</label><input type="number" min="1" value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })} placeholder="100" />
+        <button className="btn btn-green mt12" type="submit">Speichern</button>
+      </form>}
+    </div>}
+
+    <div className="card"><div className="card-title">Aktive Challenges</div>{challenges.length ? challenges.map((c) => {
+      const percent = challengePercent(c);
+      const adminProgress = c.progressBy?.admin?.value || c.totalProgress || 0;
+      return <div className="challenge-card" key={c.id}>
+        <div className="challenge-head"><div><h3>{c.title}</h3><div className="sub">bis {safeDate(c.dueDate)} · Ziel: {Number(c.target || 0).toLocaleString('de-DE')} {c.unit}</div></div><span className="pill green">{percent}%</span></div>
+        <div className="progress-track challenge-track"><div className="progress-fill" style={{ width: `${percent}%` }} /></div>
+        <div className="challenge-numbers"><span>{Number(c.totalProgress || 0).toLocaleString('de-DE')} / {Number(c.target || 0).toLocaleString('de-DE')} {c.unit}</span><span>Eingetragen: {Number(adminProgress).toLocaleString('de-DE')} {c.unit}</span></div>
+        {canAdmin ? <div className="challenge-input-row"><input type="number" min="0" step="1" value={inputs[c.id] || ''} onChange={(e) => setInputs({ ...inputs, [c.id]: e.target.value })} placeholder={`+ ${c.unit}`} /><button className="tiny-wide-btn" onClick={async () => { await addProgress(c, inputs[c.id]); setInputs({ ...inputs, [c.id]: '' }); }}>Eintragen</button></div> : <div className="notice mt8">Nur Admins können den Challenge-Fortschritt eintragen oder verändern.</div>}
+        {canAdmin && <button className="link-danger-btn mt8" onClick={() => { if (confirm('Challenge wirklich löschen?')) deleteChallenge(c.id); }}>Challenge löschen</button>}
+      </div>;
+    }) : <div className="empty">Noch keine Challenges vorhanden.</div>}</div>
   </main>;
 }
 

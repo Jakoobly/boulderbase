@@ -149,7 +149,35 @@ service cloud.firestore {
     }
 
     match /challenges/{challengeId} {
-      allow read, create, update, delete: if signedIn();
+      // Challenges gehören immer zu einer Gruppe.
+      // Lesen: nur aktive Gruppenmitglieder.
+      allow read: if signedIn()
+        && resource.data.groupId is string
+        && isGroupMember(resource.data.groupId);
+
+      // Erstellen: nur Admins/Owner/Ersteller der Gruppe.
+      allow create: if signedIn()
+        && request.resource.data.groupId is string
+        && exists(/databases/$(database)/documents/groups/$(request.resource.data.groupId))
+        && isGroupAdmin(groupDoc(request.resource.data.groupId).data)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.unit is string
+        && request.resource.data.target is number
+        && request.resource.data.target > 0;
+
+      // Fortschritt / Ergebnisse ändern: nur Admins/Owner/Ersteller der Gruppe.
+      // groupId und createdBy dürfen dabei nicht verändert werden.
+      allow update: if signedIn()
+        && resource.data.groupId is string
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && isGroupAdmin(groupDoc(resource.data.groupId).data);
+
+      // Löschen: nur Admins/Owner/Ersteller der Gruppe.
+      allow delete: if signedIn()
+        && resource.data.groupId is string
+        && isGroupAdmin(groupDoc(resource.data.groupId).data);
     }
   }
 }
