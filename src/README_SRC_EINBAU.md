@@ -4,7 +4,6 @@ Diesen Ordner kannst du 1:1 gegen deinen bisherigen `src/`-Ordner austauschen.
 
 Enthalten:
 - Freundessystem: `friends/`, `hooks/useFriends.js`, `services/friendService.js`
-- Daily Boulder Quote: `components/DailyQuoteCard.jsx`, `data/dailyQuotes.js`
 - Addons: ErrorBoundary, Toast/Notifications, LoadingState, EmptyState, PWA-Hinweis
 - Firebase-Anbindung: `services/firebase.js`
 

@@ -19,21 +19,21 @@ export default function FriendsList({ user, friends, onChanged, notify }) {
       <div className="card-title">Meine Freunde</div>
       <div className="list">
         {friends.length === 0 && <div className="empty">Noch keine Freunde.</div>}
-        {friends.map((f) => (
-          <div className="list-item" key={f.uid}>
-            <div className="row">
+        {friends.map((f) => {
+          return <div className="list-item friend-list-item" key={f.uid}>
+            <div className="row friend-list-row">
               <Avatar user={f} className="ice" />
-              <div>
+              <div className="friend-list-info">
                 <h3>{f.name || 'Boulderer'}</h3>
                 <div className="sub">{f.points || 0} Punkte · {f.sessions || 0} Sessions</div>
               </div>
               <span className="friend-badge">Freund</span>
             </div>
-            <div className="mini-actions">
-              <button className="back-btn" onClick={() => remove(f.uid)}>Entfernen</button>
+            <div className="mini-actions friend-mini-actions">
+              <button type="button" className="back-btn friend-action-btn" onClick={() => remove(f.uid)}>Entfernen</button>
             </div>
-          </div>
-        ))}
+          </div>;
+        })}
       </div>
     </section>
   );
