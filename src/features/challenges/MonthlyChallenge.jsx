@@ -30,7 +30,7 @@ export default function MonthlyChallenge({ challenge, user, back, join, addProgr
     </div>
 
     <div className="card">
-      <div className="card-title">Leaderboard</div>
+      <div className="card-title">Bestenliste</div>
       <div className="sub mb12">Hier zählt, wie viel jede Person im aktuellen Monat trainiert hat. Gesamt eingetragen: {totalTraining.toLocaleString('de-DE')} {unitLabel(challenge.unit)}.</div>
       {rows.length ? rows.map((r, i) => {
         const value = Number(r.value || 0);

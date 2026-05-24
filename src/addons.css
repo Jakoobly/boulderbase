@@ -485,3 +485,65 @@
 .challenge-assign-row .challenge-member-select,.challenge-assign-row input{width:100%;min-width:0;box-sizing:border-box}
 .modal-danger-zone{border-top:.5px solid var(--border);margin-top:14px;padding-top:12px}
 @media(max-width:520px){.challenge-assign-row{grid-template-columns:1fr}.challenge-assign-row .tiny-wide-btn{width:100%}}
+
+/* Group screen button layout fixes */
+.group-main-actions {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.group-main-actions .btn {
+  width: 100%;
+  min-width: 0;
+  margin-top: 0 !important;
+}
+.group-personalize-action {
+  grid-column: 1 / -1;
+}
+@media (max-width: 520px) {
+  .group-main-actions {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .group-main-actions .btn {
+    padding-left: 10px;
+    padding-right: 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .group-personalize-action {
+    white-space: normal;
+  }
+}
+
+
+.group-personalize-action{
+  margin-top:8px;
+  align-self:flex-end;
+  font-size:0.82rem !important;
+  padding:6px 10px !important;
+  opacity:.75;
+  border:1px solid rgba(255,255,255,.12);
+  max-width:max-content;
+}
+.group-personalize-action:hover{opacity:.95;}
+
+/* Gruppenkopf: Mitgliederzahl klein und unauffällig direkt neben dem Gruppennamen */
+.group-header-row > div:last-child{min-width:0}
+.group-title-line{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}
+.group-title-line .logo{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.group-member-count-inline{display:inline-flex;align-items:center;border:.5px solid var(--border);border-radius:999px;padding:2px 7px;color:var(--muted);font-size:10px;font-weight:800;line-height:1.4;white-space:nowrap;background:var(--surface2)}
+
+/* Monatsstatistiken im Reiter „Statistiken“ */
+.compact-stat-grid{grid-template-columns:1fr;margin-top:10px}
+.monthly-stats-card{border:.5px solid var(--border);border-radius:14px;padding:12px;margin-top:10px;background:var(--surface)}
+.monthly-stats-title{font-size:14px;font-weight:900;margin-bottom:10px;text-transform:capitalize}
+.monthly-stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.monthly-stats-grid .stat-box{padding:10px 6px}
+.monthly-stats-grid .stat-num{font-size:20px}
+.monthly-stats-grid .stat-lbl{font-size:10px}
+
+@media(max-width:380px){
+  .monthly-stats-grid{gap:6px}
+  .monthly-stats-grid .stat-num{font-size:18px}
+  .monthly-stats-grid .stat-lbl{font-size:9px}
+}
