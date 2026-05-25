@@ -13,6 +13,7 @@ export default function Challenges({ group, challenges, currentUid, back, create
   const members = Object.values(group.members || {}).filter((m) => m.active);
   const currentMember = group.members?.[currentUid];
   const selectableMembers = canAdmin ? members : (currentMember ? [currentMember] : []);
+  const UNASSIGNED_MEMBER = '__unassigned__';
   function inputKey(challengeId, field) { return `${challengeId}-${field}`; }
   async function submitChallenge(e) {
     e.preventDefault();
@@ -48,10 +49,11 @@ export default function Challenges({ group, challenges, currentUid, back, create
           {rows.length ? rows.map((r, i) => <div className="lb-row compact-row" key={r.uid || i}><div className="lb-rank">{rank(i)}</div><Avatar profile={r} className="ice" /><div className="lb-name">{r.name || 'Unbekannt'}</div><div className="lb-score">{Number(r.value || 0).toLocaleString('de-DE')} {unitLabel(c.unit)}</div></div>) : <div className="empty compact-empty">Noch keine Beiträge.</div>}
           <div className="challenge-input-row challenge-assign-row">
             <select className="small-select challenge-member-select" value={inputs[inputKey(c.id, 'member')] || currentUid} onChange={(e) => setInputs({ ...inputs, [inputKey(c.id, 'member')]: e.target.value })} disabled={!canAdmin}>
+              {canAdmin && <option value={UNASSIGNED_MEMBER}>Keinem Mitglied zuordnen</option>}
               {selectableMembers.map((m) => <option key={m.uid} value={m.uid}>{m.uid === currentUid ? `${m.name || 'Du'} (Du)` : (m.name || 'Unbekannt')}</option>)}
             </select>
             <input type="number" min="0" step={unitStep(c.unit)} value={inputs[inputKey(c.id, 'amount')] || ''} onChange={(e) => setInputs({ ...inputs, [inputKey(c.id, 'amount')]: e.target.value })} placeholder={`+ ${unitLabel(c.unit)}`} />
-            <button className="tiny-wide-btn" onClick={async () => { const memberUid = inputs[inputKey(c.id, 'member')] || currentUid; await addProgress(c, inputs[inputKey(c.id, 'amount')], memberUid); setInputs({ ...inputs, [inputKey(c.id, 'amount')]: '' }); }}>Beitrag eintragen</button>
+            <button className="tiny-wide-btn" onClick={async () => { const selectedUid = inputs[inputKey(c.id, 'member')] || currentUid; const memberUid = selectedUid === UNASSIGNED_MEMBER ? null : selectedUid; await addProgress(c, inputs[inputKey(c.id, 'amount')], memberUid); setInputs({ ...inputs, [inputKey(c.id, 'amount')]: '' }); }}>Beitrag eintragen</button>
           </div>
           {canAdmin && <button className="link-danger-btn mt8" onClick={() => { if (confirm('Challenge wirklich löschen?')) deleteChallenge(c.id); }}>Challenge löschen</button>}
         </div>}

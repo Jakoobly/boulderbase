@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { deleteUser, onAuthStateChanged, signOut } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
 import AuthScreen from './components/AuthScreen.jsx';
 import FriendsScreen from './friends/FriendsScreen.jsx';
@@ -416,15 +416,21 @@ export default function App() {
 
     const myRole = activeGroup.members?.[user.uid]?.role;
     const canAdmin = activeGroup.createdBy === user.uid || myRole === 'owner' || myRole === 'admin';
-    const normalizedTargetUid = targetUid || user.uid;
-    if (normalizedTargetUid !== user.uid && !canAdmin) return notify('Nur Admins können Beiträge anderen Mitgliedern zuordnen');
+    const normalizedTargetUid = targetUid || null;
+    if (!normalizedTargetUid && !canAdmin) return notify('Nur Admins können Beiträge ohne Mitglied eintragen');
+    if (normalizedTargetUid && normalizedTargetUid !== user.uid && !canAdmin) return notify('Nur Admins können Beiträge anderen Mitgliedern zuordnen');
 
-    const targetMember = activeGroup.members?.[normalizedTargetUid];
-    if (!targetMember?.active) return notify('Dieses Gruppenmitglied wurde nicht gefunden');
+    const updates = {
+      totalProgress: increment(value),
+      updatedBy: user.uid,
+      updatedAtMillis: Date.now()
+    };
 
-    const current = Number(challenge.progressBy?.[normalizedTargetUid]?.value || 0);
-    await updateDoc(doc(db, 'challenges', challenge.id), {
-      [`progressBy.${normalizedTargetUid}`]: {
+    if (normalizedTargetUid) {
+      const targetMember = activeGroup.members?.[normalizedTargetUid];
+      if (!targetMember?.active) return notify('Dieses Gruppenmitglied wurde nicht gefunden');
+      const current = Number(challenge.progressBy?.[normalizedTargetUid]?.value || 0);
+      updates[`progressBy.${normalizedTargetUid}`] = {
         uid: normalizedTargetUid,
         name: targetMember.name || 'Unbekannt',
         avatarColor: targetMember.avatarColor || '#7C83FD',
@@ -432,11 +438,10 @@ export default function App() {
         value: current + value,
         updatedAt: Date.now(),
         updatedBy: user.uid
-      },
-      totalProgress: increment(value),
-      updatedBy: user.uid,
-      updatedAtMillis: Date.now()
-    });
+      };
+    }
+
+    await updateDoc(doc(db, 'challenges', challenge.id), updates);
     notify('Fortschritt gespeichert');
   }
 
@@ -461,6 +466,20 @@ export default function App() {
     setProfile(next); notify('Profil gespeichert');
   }
 
+  async function deleteProfile() {
+    if (!user?.uid) return;
+    try {
+      await deleteDoc(doc(db, 'users', user.uid));
+      localStorage.removeItem('bb-current-view');
+      localStorage.removeItem('bb-active-session');
+      await deleteUser(user);
+      notify('Profil gelöscht');
+    } catch (error) {
+      console.error('Profil konnte nicht gelöscht werden:', error);
+      notify(error?.code === 'auth/requires-recent-login' ? 'Bitte neu einloggen und dann Profil löschen' : 'Profil konnte nicht gelöscht werden');
+    }
+  }
+
   if (screen === 'loading') return <div className="screen active"><div style={{ margin: 'auto' }}><div className="logo">Boulder<em>Base</em></div></div></div>;
   if (screen === 'auth') return <AuthScreen />;
   if (!user || !profile) return null;
@@ -469,7 +488,7 @@ export default function App() {
     {toast && <div className="toast show">{toast}</div>}
     {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
     {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} />}
-    {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} />}
+    {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} deleteProfile={deleteProfile} />}
     {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} openChallenges={() => setScreen('challenges')} editGroup={updateGroup} updateMemberRole={updateMemberRole} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} sendMessage={addGroupMessage} />}
     {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}
     {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
