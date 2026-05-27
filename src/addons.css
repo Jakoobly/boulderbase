@@ -2,6 +2,16 @@
 .quote-card {
   background: linear-gradient(135deg, rgba(176,215,255,.55), rgba(255,255,255,.92));
 }
+
+.setup-select-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:end}
+.custom-rules-card input:disabled{opacity:.5;cursor:not-allowed}
+.custom-toggle{align-self:center;margin:0}
+.custom-color-grid{display:grid;gap:8px}
+.custom-color-row{display:grid;grid-template-columns:minmax(76px,.8fr) minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:end;border-left:4px solid var(--accent);background:var(--surface2);border-radius:12px;padding:10px}
+.custom-color-row strong{font-size:13px}
+.custom-color-row label{margin:0}
+.custom-color-row input{margin-top:4px;padding:9px 8px;font-size:13px}
+@media(max-width:520px){.setup-select-grid{grid-template-columns:1fr}.custom-color-row{grid-template-columns:1fr 1fr}.custom-color-row strong{grid-column:1/-1}}
 .quote-text {
   font-size: 17px;
   line-height: 1.45;
@@ -575,6 +585,51 @@
   font-size: 12px;
   border-radius: 11px;
 }
+.personalize-modal .modal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 140px);
+  justify-content: flex-end;
+}
+.personalize-modal .modal-actions .btn {
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+  flex: none;
+}
+.personalize-actions {
+  display: grid !important;
+  grid-template-columns: repeat(2, 140px) !important;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 10px;
+}
+.personalize-action-btn {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  border-radius: 13px;
+  border: 1px solid var(--border-md);
+  cursor: pointer;
+  font-family: 'Syne', sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  padding: 0 12px;
+}
+.personalize-action-btn.secondary {
+  background: var(--surface);
+  color: var(--text);
+}
+.personalize-action-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.personalize-action-btn:active {
+  transform: scale(.98);
+}
 .modal-danger-zone {
   margin-top: 10px;
 }
@@ -599,5 +654,16 @@
   .modal-actions {
     flex-direction: row !important;
     justify-content: flex-end;
+  }
+  .personalize-modal .modal-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .personalize-modal .modal-actions .btn {
+    width: 100% !important;
+    flex: none;
+  }
+  .personalize-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }

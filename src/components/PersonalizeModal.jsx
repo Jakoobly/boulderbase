@@ -27,7 +27,7 @@ export default function PersonalizeModal({ title, value, descriptionLabel = 'Bes
       <div className="modal-section"><label>Icon</label><div className="avatar-picker modal-picker">{AVATAR_ICONS.map((i) => <button type="button" key={i} className={`avatar-choice ${draft.avatarIcon === i ? 'active' : ''}`} onClick={() => setDraft({ ...draft, avatarIcon: i })}>{i}</button>)}</div></div>
       <div className="modal-section"><label>Farbe</label><div className="avatar-picker modal-picker">{AVATAR_COLORS.map((c) => <button type="button" key={c} className={`avatar-choice color-choice ${draft.avatarColor === c ? 'active' : ''}`} style={{ background: c }} onClick={() => setDraft({ ...draft, avatarColor: c })}>{draft.avatarColor === c ? '✓' : ''}</button>)}</div></div>
       {dangerAction && <div className="modal-danger-zone"><button type="button" className="link-danger-btn subtle-delete-btn" onClick={dangerAction.onClick}>{dangerAction.label}</button></div>}
-      <div className="modal-actions"><button className="btn btn-secondary" onClick={onClose}>Abbrechen</button><button className="btn btn-primary" onClick={save}>Speichern</button></div>
+      <div className="modal-actions personalize-actions"><button className="personalize-action-btn secondary" onClick={onClose}>Abbrechen</button><button className="personalize-action-btn primary" onClick={save}>Speichern</button></div>
     </div>
   </div>;
 }

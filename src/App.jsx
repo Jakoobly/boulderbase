@@ -11,7 +11,7 @@ import Game from './features/sessions/Game.jsx';
 import Results from './features/sessions/Results.jsx';
 import Challenges from './features/challenges/Challenges.jsx';
 import { auth, db } from './services/firebase.js';
-import { ROUTES } from './constants.js';
+import { DEFAULT_CUSTOM_RULES, ROUTES } from './constants.js';
 import { code, emptyRouteState } from './utils.js';
 import { initialProfile } from './utils/profile.js';
 import { recalcParticipant } from './utils/scoring.js';
@@ -44,7 +44,7 @@ export default function App() {
   const [activeSession, setActiveSession] = useState(null);
   const [toast, setToast] = useState('');
   const [profileMetric, setProfileMetric] = useState('points');
-  const [setup, setSetup] = useState({ title: '', mode: 'normal', playType: 'ffa', minutes: 45, selected: {}, guests: [], singleDevice: false, teams: [] });
+  const [setup, setSetup] = useState({ title: '', mode: 'normal', playType: 'ffa', minutes: 45, selected: {}, guests: [], singleDevice: false, teams: [], customRules: DEFAULT_CUSTOM_RULES });
 
   function notify(msg) { setToast(msg); setTimeout(() => setToast(''), 2300); }
   const safeName = () => profile?.name || user?.displayName || user?.email?.split('@')[0] || 'Boulderer';
@@ -243,7 +243,8 @@ export default function App() {
       guests: [],
       singleDevice: false,
       kind,
-      teams: defaultTeams
+      teams: defaultTeams,
+      customRules: DEFAULT_CUSTOM_RULES
     });
     setScreen('setup');
   }
@@ -297,6 +298,7 @@ export default function App() {
       groupName: setup.kind === 'group' ? activeGroup.name : 'Freie Runde',
       mode: setup.mode,
       playType: setup.playType,
+      customRules: setup.mode === 'custom' ? { ...DEFAULT_CUSTOM_RULES, ...(setup.customRules || {}) } : null,
       singleDevice: !!setup.singleDevice,
       teams,
       timerMinutes: Number(setup.minutes) || 45,
@@ -334,21 +336,23 @@ export default function App() {
     if (!activeSession || activeSession.status !== 'active') return notify('Session ist beendet');
     const p = structuredClone(activeSession.participants[uid]);
     const rd = { ...p.routes[routeIndex] };
+    const customRules = { ...DEFAULT_CUSTOM_RULES, ...(activeSession.customRules || {}) };
+    const countAttempts = activeSession.mode === 'custom' ? customRules.countAttempts !== false : activeSession.mode !== 'bonus';
     if (rd.solved) return notify('Top ist gespeichert und unveränderlich');
 
     if (action === 'attempt') {
-      if (activeSession.mode === 'bonus') return notify('Im Bonusmodus werden keine Versuche gezählt');
-      const max = activeSession.mode === 'comp' ? 12 : 99;
-      if (rd.attempts >= max) return notify(activeSession.mode === 'comp' ? 'Maximal 12 Versuche im Comp-Modus' : 'Maximum erreicht');
+      if (!countAttempts) return notify('In diesem Modus werden keine Versuche gezählt');
+      const max = activeSession.mode === 'comp' ? 12 : activeSession.mode === 'custom' ? Number(customRules.maxAttempts) || 99 : 99;
+      if (rd.attempts >= max) return notify(activeSession.mode === 'comp' ? 'Maximal 12 Versuche im Comp-Modus' : `Maximal ${max} Versuche`);
       rd.attempts += 1;
     }
     if (action === 'zone') {
-      if (activeSession.mode !== 'bonus' && rd.attempts === 0) rd.attempts = 1;
+      if (countAttempts && rd.attempts === 0) rd.attempts = 1;
       rd.zone = true;
       rd.zoneAt = rd.zoneAt || Date.now();
     }
     if (action === 'top') {
-      if (activeSession.mode !== 'bonus' && rd.attempts === 0) rd.attempts = 1;
+      if (countAttempts && rd.attempts === 0) rd.attempts = 1;
       rd.solved = true;
       rd.zone = false;
       rd.topAt = Date.now();
@@ -357,7 +361,7 @@ export default function App() {
 
     p.routes[routeIndex] = rd;
     p.routeLog = [...(p.routeLog || []), { routeIndex, type: action, attempts: rd.attempts, at: Date.now() }].slice(-80);
-    const next = recalcParticipant(p, activeSession.mode);
+    const next = recalcParticipant(p, activeSession.mode, activeSession.customRules);
     await updateDoc(doc(db, 'sessions', activeSession.id), { [`participants.${uid}`]: next });
   }
 
@@ -496,13 +500,6 @@ export default function App() {
     {screen === 'results' && activeSession && <Results session={activeSession} back={() => activeSession.groupId ? openGroup(activeSession.groupId) : setScreen('home')} />}
   </div>;
 }
-
-
-
-
-
-
-
 
 
 

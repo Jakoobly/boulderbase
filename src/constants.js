@@ -9,10 +9,32 @@ export const COLORS = [
 
 export const ROUTES = COLORS.flatMap((c) => Array.from({ length: c.count }, (_, i) => ({ ...c, num: i + 1, id: `${c.key}-${i + 1}` })));
 
+export const SESSION_MODES = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'comp', label: 'Comp' },
+  { value: 'bonus', label: 'Bonus' },
+  { value: 'custom', label: 'Personalisiert' },
+];
+
+export const PLAY_TYPES = [
+  { value: 'ffa', label: 'Solo' },
+  { value: 'team', label: 'Team' },
+];
+
+export const DEFAULT_CUSTOM_RULES = {
+  countAttempts: true,
+  maxAttempts: 12,
+  attemptPenaltyPercent: 5,
+  zonePercent: 35,
+  pointsByColor: Object.fromEntries(COLORS.map((c) => [c.key, c.pts])),
+  bonusByColor: Object.fromEntries(COLORS.map((c) => [c.key, c.bonus || 0])),
+};
+
 export const MODE_RULES = {
   normal: ['Punkte hängen von der Boulderfarbe ab.', 'Es gibt keinen Flashbonus.', 'Gewinner ist, wer am Ende die meisten Punkte hat.'],
   comp: ['Punkte hängen von der Boulderfarbe ab: schwere Boulder geben mehr Punkte.', 'Es gibt keinen Flashbonus.', 'Maximal 12 Versuche pro Boulder; jeder weitere Versuch reduziert Top- und Zone-Punkte um 5%.', 'Zone zählt ungefähr ein Drittel des Top-Werts und wird vom Top überschrieben.'],
   bonus: ['Keine Versuchszählung.', 'Gelb 100, Grün 200, Weiß 350, Blau 550, Rot 800, Schwarz 1200 Punkte.', 'Zones geben ungefähr ein Drittel der Top-Punkte.', 'Rote Tops geben +10% auf die bisher gesammelten Punkte, schwarze Tops +20%.'],
+  custom: ['Du legst Solo oder Team, Punkte pro Farbe, Zone-Wertung, Versuche und Bonuswerte selbst fest.'],
   team: ['Punkteberechnung wie normal, ohne Flashbonus.', 'Teilnehmer werden Team A/B zugeordnet.', 'Das Teamleaderboard addiert Punkte je Team.'],
 };
 

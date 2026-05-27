@@ -1,4 +1,4 @@
-import { ROUTES } from '../constants.js';
+import { DEFAULT_CUSTOM_RULES, ROUTES } from '../constants.js';
 
 export function zonePoints(route) {
   return Math.round(route.pts / 3);
@@ -9,8 +9,27 @@ export function compAttemptMultiplier(attempts) {
   return Math.max(0.45, 1 - (safeAttempts - 1) * 0.05);
 }
 
-export function routeScore(route, rd, mode) {
+function customRoutePoints(route, rules) {
+  return Number(rules?.pointsByColor?.[route.key] ?? route.pts);
+}
+
+function customBonus(route, rules) {
+  return Number(rules?.bonusByColor?.[route.key] ?? 0);
+}
+
+export function routeScore(route, rd, mode, customRules = DEFAULT_CUSTOM_RULES) {
   const attempts = Math.max(1, Number(rd.attempts) || 1);
+  if (mode === 'custom') {
+    const rules = { ...DEFAULT_CUSTOM_RULES, ...(customRules || {}) };
+    const basePoints = customRoutePoints(route, rules);
+    const penalty = rules.countAttempts ? Math.max(0, Number(rules.attemptPenaltyPercent) || 0) : 0;
+    const multiplier = Math.max(0, 1 - (attempts - 1) * (penalty / 100));
+    const topPoints = Math.round(basePoints * multiplier);
+    const zonePoints = Math.round(basePoints * (Math.max(0, Number(rules.zonePercent) || 0) / 100) * multiplier);
+    if (rd.solved) return topPoints;
+    if (rd.zone) return Math.max(1, zonePoints);
+    return 0;
+  }
   if (mode === 'comp') {
     const multiplier = compAttemptMultiplier(attempts);
     const topPoints = Math.round(route.pts * multiplier);
@@ -24,15 +43,16 @@ export function routeScore(route, rd, mode) {
   return 0;
 }
 
-export function recalcParticipant(participant, mode) {
+export function recalcParticipant(participant, mode, customRules = DEFAULT_CUSTOM_RULES) {
   let score = 0;
   let solved = 0;
   let flash = 0;
   let zones = 0;
   ROUTES.forEach((route, index) => {
     const routeData = participant.routes[index];
+    if (mode === 'custom' && routeData.solved) score += Math.round(score * (customBonus(route, customRules) / 100));
     if (mode === 'bonus' && routeData.solved && route.bonus) score += Math.round(score * (route.bonus / 100));
-    score += routeScore(route, routeData, mode);
+    score += routeScore(route, routeData, mode, customRules);
     if (routeData.solved) solved += 1;
     if (routeData.zone) zones += 1;
   });
