@@ -23,6 +23,7 @@ export const PLAY_TYPES = [
 
 export const DEFAULT_CUSTOM_RULES = {
   countAttempts: true,
+  unlimitedAttempts: false,
   maxAttempts: 12,
   attemptPenaltyPercent: 5,
   zonePercent: 35,

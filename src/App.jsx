@@ -276,7 +276,8 @@ export default function App() {
     members.filter((m) => setup.selected[m.uid]).forEach((m) => {
       participants[m.uid] = { uid: m.uid, accountUid: m.uid, name: m.name, avatarColor: m.avatarColor, avatarIcon: m.avatarIcon, isGuest: false, routes: emptyRouteState(ROUTES), routeLog: [], totalScore: 0, routesSolved: 0, flashCount: 0, zoneCount: 0 };
     });
-    setup.guests.forEach((guest) => {
+    const guests = setup.singleDevice ? setup.guests || [] : [];
+    guests.forEach((guest) => {
       const name = typeof guest === 'string' ? guest : guest.name;
       const linkedUid = typeof guest === 'object' ? guest.accountUid : null;
       const uid = linkedUid || guest.id || `guest-${crypto.randomUUID()}`;
@@ -342,8 +343,9 @@ export default function App() {
 
     if (action === 'attempt') {
       if (!countAttempts) return notify('In diesem Modus werden keine Versuche gezählt');
-      const max = activeSession.mode === 'comp' ? 12 : activeSession.mode === 'custom' ? Number(customRules.maxAttempts) || 99 : 99;
-      if (rd.attempts >= max) return notify(activeSession.mode === 'comp' ? 'Maximal 12 Versuche im Comp-Modus' : `Maximal ${max} Versuche`);
+      const unlimitedAttempts = activeSession.mode === 'custom' && !!customRules.unlimitedAttempts;
+      const max = activeSession.mode === 'comp' ? 12 : activeSession.mode === 'custom' && !unlimitedAttempts ? Number(customRules.maxAttempts) || 99 : 99;
+      if (!unlimitedAttempts && rd.attempts >= max) return notify(activeSession.mode === 'comp' ? 'Maximal 12 Versuche im Comp-Modus' : `Maximal ${max} Versuche`);
       rd.attempts += 1;
     }
     if (action === 'zone') {
@@ -382,10 +384,13 @@ export default function App() {
       Object.values(results).filter((p) => !p.isGuest).forEach((p) => {
         const memberUid = p.accountUid || p.uid;
         const base = `members.${memberUid}.stats`;
+        const currentBest = Number(activeGroup?.members?.[memberUid]?.stats?.best || 0);
+        const sessionScore = Number(p.totalScore || 0);
         updates[`${base}.sessions`] = increment(1);
-        updates[`${base}.points`] = increment(p.totalScore || 0);
+        updates[`${base}.points`] = increment(sessionScore);
         updates[`${base}.tops`] = increment(p.routesSolved || 0);
         updates[`${base}.flashes`] = increment(p.flashCount || 0);
+        updates[`${base}.best`] = Math.max(currentBest, sessionScore);
       });
       await updateDoc(doc(db, 'groups', activeSession.groupId), updates);
     }

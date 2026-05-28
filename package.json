@@ -6,16 +6,20 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview",
     "deploy": "npm run build && firebase deploy"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "firebase": "latest",
+    "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "firebase": "latest",
-    "lucide-react": "latest"
+    "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "vitest": "^4.1.7"
+  }
 }

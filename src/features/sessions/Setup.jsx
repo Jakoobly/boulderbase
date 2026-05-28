@@ -9,14 +9,16 @@ export default function Setup({ setup, setSetup, group, profile, user, back, cre
   const selectedMembers = members.filter((m) => setup.selected[m.uid]);
   const selectedPlayers = [
     ...selectedMembers.map((m) => ({ id: m.uid, name: m.name, accountUid: m.uid })),
-    ...(setup.guests || []).map((g, i) => ({ id: g.accountUid || g.id || `guest-${i}`, name: typeof g === 'string' ? g : g.name, accountUid: g.accountUid || null })),
+    ...(setup.singleDevice ? (setup.guests || []).map((g, i) => ({ id: g.accountUid || g.id || `guest-${i}`, name: typeof g === 'string' ? g : g.name, accountUid: g.accountUid || null })) : []),
   ];
 
   const updateSetup = (patch) => setSetup({ ...setup, ...patch });
   const setCustomRule = (key, value) => updateSetup({ customRules: { ...customRules, [key]: value } });
+  const setAttemptsUnlimited = (enabled) => updateSetup({ customRules: { ...customRules, unlimitedAttempts: enabled } });
   const setCustomColorRule = (bucket, colorKey, value) => updateSetup({
     customRules: { ...customRules, [bucket]: { ...(customRules[bucket] || {}), [colorKey]: Number(value) || 0 } },
   });
+  const setSingleDevice = (enabled) => updateSetup({ singleDevice: enabled, guests: enabled ? setup.guests : [] });
   const setTeamName = (teamId, name) => updateSetup({ teams: setup.teams.map((t) => (t.id === teamId ? { ...t, name } : t)) });
   const assignTeam = (playerId, teamId) => updateSetup({
     teams: setup.teams.map((t) => ({ ...t, members: t.id === teamId ? Array.from(new Set([...(t.members || []), playerId])) : (t.members || []).filter((id) => id !== playerId) })),
@@ -33,7 +35,7 @@ export default function Setup({ setup, setSetup, group, profile, user, back, cre
         <div><label>Spielmodus</label><select value={setup.mode} onChange={(e) => updateSetup({ mode: e.target.value, customRules: setup.customRules || DEFAULT_CUSTOM_RULES })}>{SESSION_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></div>
         <div><label>Wertung</label><select value={setup.playType} onChange={(e) => updateSetup({ playType: e.target.value })}>{PLAY_TYPES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}</select></div>
       </div>
-      <label className="toggle-row mt12"><input type="checkbox" checked={!!setup.singleDevice} onChange={(e) => updateSetup({ singleDevice: e.target.checked })} /> Nur von einem Handy spielen</label>
+      <label className="toggle-row mt12"><input type="checkbox" checked={!!setup.singleDevice} onChange={(e) => setSingleDevice(e.target.checked)} /> Nur von einem Handy spielen</label>
       <div className="row mt8"><div><label>Zeitlimit</label><input type="number" value={setup.minutes} onChange={(e) => updateSetup({ minutes: e.target.value })} /></div></div>
       <div className="quick-time-grid">{[30, 45, 60, 90, 120].map((m) => <button key={m} className={`quick-time-btn ${Number(setup.minutes) === m ? 'active' : ''}`} onClick={() => updateSetup({ minutes: m })}>{m} min</button>)}</div>
     </div>
@@ -43,7 +45,8 @@ export default function Setup({ setup, setSetup, group, profile, user, back, cre
       <div className="setup-select-grid">
         <label className="toggle-row custom-toggle"><input type="checkbox" checked={!!customRules.countAttempts} onChange={(e) => setCustomRule('countAttempts', e.target.checked)} /> Versuche zählen</label>
         <div><label>Zone in % vom Top</label><input type="number" min="0" max="100" value={customRules.zonePercent} onChange={(e) => setCustomRule('zonePercent', Number(e.target.value) || 0)} /></div>
-        <div><label>Max. Versuche</label><input type="number" min="1" disabled={!customRules.countAttempts} value={customRules.maxAttempts} onChange={(e) => setCustomRule('maxAttempts', Number(e.target.value) || 1)} /></div>
+        <label className="toggle-row custom-toggle"><input type="checkbox" disabled={!customRules.countAttempts} checked={!!customRules.unlimitedAttempts} onChange={(e) => setAttemptsUnlimited(e.target.checked)} /> Unbegrenzte Versuche</label>
+        <div><label>Max. Versuche</label><input type="number" min="1" disabled={!customRules.countAttempts || customRules.unlimitedAttempts} value={customRules.maxAttempts} onChange={(e) => setCustomRule('maxAttempts', Number(e.target.value) || 1)} /></div>
         <div><label>Abzug pro Versuch (%)</label><input type="number" min="0" max="100" disabled={!customRules.countAttempts} value={customRules.attemptPenaltyPercent} onChange={(e) => setCustomRule('attemptPenaltyPercent', Number(e.target.value) || 0)} /></div>
       </div>
       <div className="custom-color-grid mt12">{COLORS.map((c) => <div className="custom-color-row" key={c.key} style={{ borderLeftColor: c.hex }}>
@@ -55,9 +58,13 @@ export default function Setup({ setup, setSetup, group, profile, user, back, cre
 
     <div className="card"><div className="card-title">Regeln</div><div className="notice"><ul style={{ marginLeft: 18 }}>{(MODE_RULES[setup.mode] || MODE_RULES.normal).map((r) => <li key={r}>{r}</li>)}</ul></div></div>
 
-    <div className="card"><div className="card-title">Teilnehmer</div>{members.map((m) => <label className="check-row" key={m.uid}><input type="checkbox" checked={!!setup.selected[m.uid]} onChange={(e) => updateSetup({ selected: { ...setup.selected, [m.uid]: e.target.checked } })} /><Avatar profile={m} className="ice" /><strong>{m.name}</strong></label>)}
-      {(setup.guests || []).map((g, i) => <div className="check-row" key={i}><div className="avatar">G</div><strong>{typeof g === 'string' ? g : g.name}</strong><button className="soft-link" onClick={() => updateSetup({ guests: setup.guests.filter((_, x) => x !== i) })}>entfernen</button></div>)}
-      <button className="text-action" onClick={() => { const g = prompt('Name des Gastspielers?'); if (g) updateSetup({ guests: [...setup.guests, { id: `guest-${crypto.randomUUID()}`, name: g, accountUid: null }] }); }}>+ Gastspieler hinzufügen</button>
+    <div className="card"><div className="card-title">Teilnehmer</div>
+      {setup.kind === 'group' && setup.singleDevice && <div className="notice small-notice">Ausgewählte Gruppenmitglieder zählen für die Gruppen-Bestenliste. Gastspieler sind nur in dieser Runde sichtbar.</div>}
+      {setup.kind === 'group' && setup.singleDevice && <div className="sub mb8">Gruppenmitglieder</div>}
+      {members.map((m) => <label className="check-row" key={m.uid}><input type="checkbox" checked={!!setup.selected[m.uid]} onChange={(e) => updateSetup({ selected: { ...setup.selected, [m.uid]: e.target.checked } })} /><Avatar profile={m} className="ice" /><strong>{m.name}</strong></label>)}
+      {setup.singleDevice && <div className="sub mb8 mt12">Gastspieler</div>}
+      {setup.singleDevice && (setup.guests || []).map((g, i) => <div className="check-row" key={i}><div className="avatar">G</div><strong>{typeof g === 'string' ? g : g.name}</strong><button className="soft-link" onClick={() => updateSetup({ guests: setup.guests.filter((_, x) => x !== i) })}>entfernen</button></div>)}
+      {setup.singleDevice && <button className="text-action" onClick={() => { const g = prompt('Name des Gastspielers?'); if (g) updateSetup({ guests: [...setup.guests, { id: `guest-${crypto.randomUUID()}`, name: g, accountUid: null }] }); }}>+ Gastspieler hinzufügen</button>}
     </div>
 
     {setup.playType === 'team' && <div className="card"><div className="feed-head"><div><div className="card-title">Teams</div><h3>Teamnamen & Zuordnung</h3></div><button className="soft-link" onClick={addTeam}>+ Team</button></div>

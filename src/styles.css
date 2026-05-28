@@ -48,6 +48,10 @@
 .quick-time-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 10px; }
 .quick-time-btn { padding: 10px 6px; border-radius: 10px; border: 1px solid var(--border-md); background: var(--surface); color: var(--text); font-family: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
 .quick-time-btn.active, .quick-time-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.participant-picker { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.participant-pick-btn { display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border-md); background: var(--surface); color: var(--text); font-family: inherit; font-size: 14px; font-weight: 800; cursor: pointer; text-align: left; }
+.participant-pick-btn span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.participant-pick-btn.active, .participant-pick-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 @media (max-width: 420px) { .quick-time-grid { grid-template-columns: repeat(3, 1fr); } }
 
 /* V3 additions: profile charts, history, route timeline, activity feed */
