@@ -97,6 +97,8 @@
 .profile-chip{display:flex;align-items:center;gap:7px;border:.5px solid var(--border-md);background:var(--surface);color:var(--text);border-radius:999px;padding:5px 10px 5px 5px;font-family:'Syne',sans-serif;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap;min-width:0}
 .profile-chip .avatar{width:28px;height:28px;font-size:14px}.profile-chip span{line-height:1}
 .welcome-card h2{margin:6px 0 4px;font-size:25px}.quickstart-card{margin-bottom:12px}
+.home-logo-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.beta-badge{display:inline-flex;align-items:center;border:.5px solid var(--border);border-radius:999px;padding:2px 7px;color:var(--muted);font-size:10px;font-weight:800;line-height:1.4;white-space:nowrap;background:var(--surface2)}
 @media (max-width:420px){.topbar{align-items:flex-start}.topbar-actions{gap:6px}.profile-chip{padding-right:8px}.profile-chip span{display:none}.back-btn{padding:8px 10px}}
 
 .role-row {
@@ -231,6 +233,26 @@
 .role-actions-panel {
   justify-content: flex-start;
   margin-top: 10px;
+}
+.member-danger-actions {
+  border-top: 1px solid var(--border);
+  margin-top: 11px;
+  padding-top: 10px;
+}
+.member-remove-btn {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+  cursor: pointer;
+  font-family: 'Syne', sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+}
+.member-remove-btn:active {
+  transform: scale(.99);
 }
 .small-notice {
   margin-top: 8px;
@@ -510,6 +532,9 @@
 .group-personalize-action {
   grid-column: 1 / -1;
 }
+.group-poll-action {
+  grid-column: 2;
+}
 @media (max-width: 520px) {
   .group-main-actions {
     grid-template-columns: 1fr 1fr !important;
@@ -522,6 +547,9 @@
   }
   .group-personalize-action {
     white-space: normal;
+  }
+  .group-poll-action {
+    grid-column: 2;
   }
 }
 
@@ -539,7 +567,7 @@
 
 /* Gruppenkopf: Mitgliederzahl klein und unauffällig direkt neben dem Gruppennamen */
 .group-header-row > div:last-child{min-width:0}
-.group-title-line{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}
+.group-title-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .group-title-line .logo{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .group-member-count-inline{display:inline-flex;align-items:center;border:.5px solid var(--border);border-radius:999px;padding:2px 7px;color:var(--muted);font-size:10px;font-weight:800;line-height:1.4;white-space:nowrap;background:var(--surface2)}
 
@@ -556,6 +584,52 @@
   .monthly-stats-grid{gap:6px}
   .monthly-stats-grid .stat-num{font-size:18px}
   .monthly-stats-grid .stat-lbl{font-size:9px}
+}
+
+/* Gruppen-Abstimmungen */
+.poll-form{border:.5px solid var(--border);border-radius:14px;background:var(--surface2);padding:12px;margin:12px 0}
+.poll-close-action{margin-bottom:8px}
+.poll-type-tabs{grid-template-columns:1fr 1fr}
+.poll-meta-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:end}
+.poll-option-list{display:grid;gap:8px}
+.poll-option-editor{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:center}
+.poll-option-editor input:first-child:last-child{grid-column:1/3}
+.poll-option-editor .tiny-btn{width:34px;height:40px}
+.poll-inline-field{margin:0;text-transform:none;letter-spacing:0;color:var(--text);font-family:'Syne',sans-serif;font-size:12px;font-weight:800}
+.poll-inline-field span{display:block;margin-bottom:4px;color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase}
+.poll-date-time-grid{display:grid;grid-template-columns:minmax(0,1fr) 104px;gap:7px}
+.poll-date-time-grid input,.poll-date-time-grid select{min-width:0}
+.poll-list{display:grid;gap:10px}
+.poll-card{border:.5px solid var(--border);border-radius:14px;background:var(--surface);padding:13px}
+.poll-card.closed{opacity:.82}
+.poll-result-banner{display:flex;align-items:center;justify-content:space-between;gap:10px;border:.5px solid rgba(21,128,61,.2);border-radius:14px;background:var(--green-bg);padding:12px 13px;color:var(--text)}
+.poll-result-banner strong{display:block;font-size:15px;margin:2px 0}
+.poll-result-banner span{display:block;color:var(--green);font-size:13px;font-weight:800;line-height:1.35}
+.poll-result-banner .tiny-btn{flex:0 0 auto;width:32px;height:32px}
+.poll-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+.poll-head h3{font-size:17px;margin:2px 0 4px}
+.poll-kicker{font-family:'DM Mono',monospace;color:var(--muted);font-size:10px;text-transform:uppercase}
+.poll-admin-actions{display:flex;gap:6px;flex:0 0 auto}
+.poll-admin-actions .tiny-btn{width:32px;height:32px}
+.poll-best{background:var(--green-bg);color:var(--green);border:1px solid rgba(21,128,61,.18);border-radius:11px;padding:9px 10px;font-size:13px;font-weight:800;margin-bottom:10px}
+.poll-results{display:grid;gap:8px}
+.poll-result-row{display:flex;align-items:flex-start;gap:9px;border:.5px solid var(--border);border-radius:12px;padding:10px;margin:0;background:var(--surface);font-family:inherit;text-transform:none;color:var(--text);letter-spacing:0}
+.poll-result-row input{width:auto;margin-top:2px;flex:0 0 auto}
+.poll-result-body{flex:1;min-width:0}
+.poll-result-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;font-size:13px}
+.poll-result-top strong{min-width:0;overflow-wrap:anywhere}
+.poll-result-top span{font-family:'DM Mono',monospace;color:var(--muted);font-size:11px;white-space:nowrap}
+.poll-track{height:9px;margin-top:8px}
+.poll-voters{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.poll-voters .avatar{width:24px;height:24px;min-width:24px;min-height:24px;font-size:11px}
+.poll-foot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:11px;font-family:'DM Mono',monospace}
+.poll-save-btn{width:100%;margin-top:10px}
+@media(max-width:520px){
+  .poll-meta-grid,.poll-option-editor{grid-template-columns:1fr}
+  .poll-option-editor input:first-child:last-child{grid-column:auto}
+  .poll-option-editor .tiny-btn{width:100%}
+  .poll-date-time-grid{grid-template-columns:minmax(0,1fr) 96px}
+  .poll-result-top{flex-direction:column;gap:3px}
 }
 
 /* Profil: kleinere Aktionsbuttons und kompaktes Personalisieren-Fenster */

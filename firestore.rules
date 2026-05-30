@@ -157,6 +157,37 @@ service cloud.firestore {
         && isGroupAdmin(groupDoc(resource.data.groupId).data);
     }
 
+    match /groupPolls/{pollId} {
+      allow read: if signedIn()
+        && resource.data.groupId is string
+        && isGroupMember(resource.data.groupId);
+      allow create: if signedIn()
+        && request.resource.data.groupId is string
+        && exists(/databases/$(database)/documents/groups/$(request.resource.data.groupId))
+        && isGroupAdmin(groupDoc(request.resource.data.groupId).data)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.type in ["poll", "schedule"]
+        && request.resource.data.options is list;
+      allow update: if signedIn()
+        && resource.data.groupId is string
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && (
+          isGroupAdmin(groupDoc(resource.data.groupId).data)
+          || (
+            isGroupMember(resource.data.groupId)
+            && resource.data.status == "active"
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["votes", "updatedAtMillis"])
+            && request.resource.data.votes.diff(resource.data.votes).affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.votes[request.auth.uid].uid == request.auth.uid
+          )
+        );
+      allow delete: if signedIn()
+        && resource.data.groupId is string
+        && isGroupAdmin(groupDoc(resource.data.groupId).data);
+    }
+
     match /monthlyChallenges/{challengeId} {
       allow read: if signedIn();
 

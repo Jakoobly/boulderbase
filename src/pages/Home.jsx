@@ -6,7 +6,7 @@ export default function Home({ profile, groups = [], openGroup, createGroup, joi
 
   return <main className="screen active home-feed">
     <div className="topbar">
-      <div><div className="logo">Boulder<em>Base</em></div><div className="tag">Für Boulderer, von Boulderern gemacht.</div></div>
+      <div><div className="home-logo-line"><div className="logo">Boulder<em>Base</em></div><span className="beta-badge">BETA</span></div><div className="tag">Für Boulderer, von Boulderern gemacht.</div></div>
       <div className="topbar-actions">
         <button className="profile-chip" onClick={() => setScreen('profile')} aria-label="Profil öffnen"><Avatar profile={profile} className="ice" /><span>Profil</span></button>
         <button className="icon-btn" onClick={() => setScreen('friends')} title="Freunde">👥</button>

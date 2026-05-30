@@ -41,6 +41,7 @@ export default function App() {
   const [activeGroup, setActiveGroup] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [challenges, setChallenges] = useState([]);
+  const [polls, setPolls] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
   const [toast, setToast] = useState('');
   const [profileMetric, setProfileMetric] = useState('points');
@@ -137,7 +138,12 @@ export default function App() {
       const list = cs.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
       setChallenges(list);
     });
-    return () => { unsubGroup(); unsubSessions(); unsubChallenges(); };
+    const pq = query(collection(db, 'groupPolls'), where('groupId', '==', activeGroup.id));
+    const unsubPolls = onSnapshot(pq, (ps) => {
+      const list = ps.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
+      setPolls(list);
+    });
+    return () => { unsubGroup(); unsubSessions(); unsubChallenges(); unsubPolls(); };
   }, [activeGroup?.id, user?.uid, screen]);
 
   async function openGroup(groupOrId) {
@@ -196,6 +202,24 @@ export default function App() {
     notify(nextRole === 'admin' ? 'Admin-Rechte vergeben' : 'Admin-Rechte entfernt');
   }
 
+  async function removeGroupMember(targetUid) {
+    if (!activeGroup?.id || !targetUid) return;
+    const currentMember = activeGroup.members?.[user.uid];
+    const targetMember = activeGroup.members?.[targetUid];
+    const amAdmin = activeGroup.createdBy === user.uid || currentMember?.role === 'owner' || currentMember?.role === 'admin';
+    if (!amAdmin) return notify('Nur Admins dürfen Mitglieder entfernen');
+    if (!targetMember?.active) return notify('Mitglied nicht gefunden');
+    if (targetUid === user.uid) return notify('Du kannst dich nicht selbst entfernen');
+    if (targetUid === activeGroup.createdBy || targetMember.role === 'owner') return notify('Der Ersteller kann nicht entfernt werden');
+    if (targetMember.role === 'admin') return notify('Admins bitte zuerst zu Mitgliedern machen');
+    await updateDoc(doc(db, 'groups', activeGroup.id), {
+      [`members.${targetUid}.active`]: false,
+      [`members.${targetUid}.removedAt`]: Date.now(),
+      [`members.${targetUid}.removedBy`]: user.uid
+    });
+    notify('Mitglied entfernt');
+  }
+
   async function deleteActiveGroup() {
     if (!activeGroup?.id) return;
     if (activeGroup.createdBy !== user.uid) return notify('Nur der Ersteller kann die Gruppe löschen');
@@ -203,13 +227,16 @@ export default function App() {
     const ss = await getDocs(sq);
     const cq = query(collection(db, 'challenges'), where('groupId', '==', activeGroup.id));
     const cs = await getDocs(cq);
-    await Promise.all([...ss.docs.map((d) => deleteDoc(doc(db, 'sessions', d.id))), ...cs.docs.map((d) => deleteDoc(doc(db, 'challenges', d.id)))]);
+    const pq = query(collection(db, 'groupPolls'), where('groupId', '==', activeGroup.id));
+    const ps = await getDocs(pq);
+    await Promise.all([...ss.docs.map((d) => deleteDoc(doc(db, 'sessions', d.id))), ...cs.docs.map((d) => deleteDoc(doc(db, 'challenges', d.id))), ...ps.docs.map((d) => deleteDoc(doc(db, 'groupPolls', d.id)))]);
     await deleteDoc(doc(db, 'groups', activeGroup.id));
     localStorage.removeItem('bb-current-view');
     localStorage.removeItem('bb-active-session');
     setActiveGroup(null);
     setActiveSession(null);
     setSessions([]);
+    setPolls([]);
     setScreen('home');
     notify('Gruppe gelöscht');
   }
@@ -460,6 +487,106 @@ export default function App() {
     notify('Challenge gelöscht');
   }
 
+  function canManageActiveGroup() {
+    const myRole = activeGroup?.members?.[user.uid]?.role;
+    return activeGroup?.createdBy === user.uid || myRole === 'owner' || myRole === 'admin';
+  }
+
+  function memberSnapshot(uid = user.uid) {
+    const member = activeGroup?.members?.[uid] || {};
+    return {
+      uid,
+      name: member.name || safeName(),
+      avatarColor: member.avatarColor || profile.avatarColor,
+      avatarIcon: member.avatarIcon || profile.avatarIcon
+    };
+  }
+
+  async function createGroupPoll(form) {
+    if (!activeGroup?.id) return false;
+    if (!canManageActiveGroup()) {
+      notify('Nur Admins können Abstimmungen erstellen');
+      return false;
+    }
+    const isSchedule = form.type === 'schedule';
+    const cleanOptions = (form.options || [])
+      .map((option) => ({ ...option, label: String(option.label || '').trim() }))
+      .filter((option) => isSchedule ? option.startAt : option.label);
+    if (!form.title?.trim()) {
+      notify('Bitte einen Titel eingeben');
+      return false;
+    }
+    if (cleanOptions.length < (isSchedule ? 1 : 2)) {
+      notify(isSchedule ? 'Bitte mindestens einen Termin mit Datum und Uhrzeit anlegen' : 'Bitte mindestens zwei Optionen anlegen');
+      return false;
+    }
+
+    const id = crypto.randomUUID();
+    try {
+      await setDoc(doc(db, 'groupPolls', id), {
+      groupId: activeGroup.id,
+      groupName: activeGroup.name,
+      type: isSchedule ? 'schedule' : 'poll',
+      title: form.title.trim(),
+      description: String(form.description || '').trim(),
+      options: cleanOptions.map((option) => ({
+        id: option.id || crypto.randomUUID(),
+        label: option.label || option.startAt,
+        startAt: option.startAt || '',
+        endAt: option.endAt || ''
+      })),
+      allowMultiple: !!form.allowMultiple,
+      anonymous: !!form.anonymous,
+      closesAtMillis: Number(form.closesAtMillis || 0),
+      location: String(form.location || '').trim(),
+      minParticipants: Math.max(0, Number(form.minParticipants) || 0),
+      votes: {},
+      createdBy: user.uid,
+      createdAt: serverTimestamp(),
+      createdAtMillis: Date.now(),
+      updatedAtMillis: Date.now(),
+      status: 'active'
+      });
+      notify(form.type === 'schedule' ? 'Terminabfrage erstellt' : 'Abstimmung erstellt');
+      return true;
+    } catch (error) {
+      console.error('Abstimmung konnte nicht erstellt werden:', error);
+      notify(error?.code === 'permission-denied' ? 'Speichern blockiert: Firestore-Regeln deployen' : 'Abstimmung konnte nicht gespeichert werden');
+      return false;
+    }
+  }
+
+  async function voteGroupPoll(poll, optionIds) {
+    if (!activeGroup?.id || !poll?.id) return;
+    if (poll.status === 'closed' || (poll.closesAtMillis && poll.closesAtMillis <= Date.now())) return notify('Diese Abstimmung ist beendet');
+    const selected = [...new Set(optionIds || [])].filter(Boolean);
+    if (!selected.length) return notify('Bitte mindestens eine Option auswählen');
+    if (!poll.allowMultiple && selected.length > 1) return notify('Nur eine Antwort ist erlaubt');
+    await updateDoc(doc(db, 'groupPolls', poll.id), {
+      [`votes.${user.uid}`]: {
+        ...memberSnapshot(user.uid),
+        optionIds: selected,
+        updatedAtMillis: Date.now()
+      },
+      updatedAtMillis: Date.now()
+    });
+    notify('Stimme gespeichert');
+  }
+
+  async function updateGroupPoll(pollId, updates) {
+    if (!pollId) return;
+    if (!canManageActiveGroup()) return notify('Nur Admins können Abstimmungen bearbeiten');
+    await updateDoc(doc(db, 'groupPolls', pollId), { ...updates, updatedAtMillis: Date.now() });
+    notify('Abstimmung aktualisiert');
+  }
+
+  async function deleteGroupPoll(pollId) {
+    if (!pollId) return;
+    if (!canManageActiveGroup()) return notify('Nur Admins können Abstimmungen löschen');
+    await deleteDoc(doc(db, 'groupPolls', pollId));
+    notify('Abstimmung gelöscht');
+  }
+
   async function addGroupMessage(text) {
     const clean = text.trim();
     if (!activeGroup?.id || !clean) return;
@@ -498,7 +625,7 @@ export default function App() {
     {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
     {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} />}
     {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} deleteProfile={deleteProfile} />}
-    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} openChallenges={() => setScreen('challenges')} editGroup={updateGroup} updateMemberRole={updateMemberRole} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} sendMessage={addGroupMessage} />}
+    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} polls={polls} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} openChallenges={() => setScreen('challenges')} editGroup={updateGroup} updateMemberRole={updateMemberRole} removeGroupMember={removeGroupMember} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} sendMessage={addGroupMessage} createPoll={createGroupPoll} votePoll={voteGroupPoll} updatePoll={updateGroupPoll} deletePoll={deleteGroupPoll} />}
     {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}
     {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
     {screen === 'game' && activeSession && <Game session={activeSession} user={user} updateRoute={updateRoute} finish={finishSession} />}

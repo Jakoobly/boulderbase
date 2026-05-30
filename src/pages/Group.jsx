@@ -4,6 +4,7 @@ import { db } from '../services/firebase.js';
 import Avatar from '../components/Avatar.jsx';
 import PersonalizeModal from '../components/PersonalizeModal.jsx';
 import GroupChat from '../features/chat/GroupChat.jsx';
+import GroupPolls from '../features/polls/GroupPolls.jsx';
 import { rank, safeDate } from '../utils.js';
 import { ChallengeMini } from '../features/challenges/ChallengeMini.jsx';
 
@@ -87,13 +88,14 @@ function leaderboardValue(member, metric, monthPointsByMember = {}) {
   return s.points || 0;
 }
 
-export default function Group({ group, sessions, challenges, back, invite, start, openChallenges, editGroup, updateMemberRole, deleteGroup, currentUid, openSession, sendMessage }) {
+export default function Group({ group, sessions, challenges, polls = [], back, invite, start, openChallenges, editGroup, updateMemberRole, removeGroupMember, deleteGroup, currentUid, openSession, sendMessage, createPoll, votePoll, updatePoll, deletePoll }) {
   const [personalizeOpen, setPersonalizeOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteName, setDeleteName] = useState('');
   const [selectedMemberUid, setSelectedMemberUid] = useState(null);
   const [leaderMetric, setLeaderMetric] = useState('points');
   const [activeGroupPanel, setActiveGroupPanel] = useState('members');
+  const [pollComposerOpen, setPollComposerOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatLastRead, setChatLastRead] = useState(() => Number(localStorage.getItem(`boulderbase-group-chat-read-${group.id}`) || 0));
   const members = Object.values(group.members || {}).filter((m) => m.active);
@@ -140,14 +142,24 @@ export default function Group({ group, sessions, challenges, back, invite, start
     setDeleteName('');
   }
 
+  function confirmRemoveMember(member) {
+    if (!member?.uid) return;
+    if (confirm(`${member.name || 'Dieses Mitglied'} wirklich aus der Gruppe entfernen?`)) {
+      removeGroupMember(member.uid);
+      setSelectedMemberUid(null);
+    }
+  }
+
   return <main className="screen active">
     <div className="topbar"><button className="back-btn" onClick={back}>← Gruppen</button><button className="back-btn" onClick={invite}>Einladen</button></div>
 
     <div className="card">
       <div className="row group-header-row"><Avatar profile={group} className="group big" /><div><div className="group-title-line"><div className="logo" style={{ fontSize: 24 }}>{group.name}</div><span className="group-member-count-inline">{members.length} Mitglieder</span></div><div className="sub">{group.description || `Code: ${group.code}`}</div></div></div>
-      <div className="mt12 action-row group-main-actions"><button className="btn btn-primary group-half-action" onClick={start}>Neue Session</button>{canEdit && <button className="btn btn-secondary group-half-action" onClick={openChallenges}>Neue Challenge</button>}{canEdit && <button className="btn btn-ghost group-personalize-action" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div>
+      <div className="mt12 action-row group-main-actions"><button className="btn btn-primary group-half-action" onClick={start}>Neue Session</button>{canEdit && <button className="btn btn-secondary group-half-action" onClick={openChallenges}>Neue Challenge</button>}{canEdit && <button className="btn btn-secondary group-poll-action" onClick={() => setPollComposerOpen(true)}>Neue Abstimmung</button>}{canEdit && <button className="btn btn-ghost group-personalize-action" onClick={() => setPersonalizeOpen(true)}>Gruppe personalisieren</button>}</div>
     </div>
 
+
+    <GroupPolls group={group} polls={polls} currentUid={currentUid} createPoll={createPoll} votePoll={votePoll} updatePoll={updatePoll} deletePoll={deletePoll} activeOnly hideHeaderAction hideWhenEmpty composerOpen={pollComposerOpen} onComposerClose={() => setPollComposerOpen(false)} />
 
     <div className="card"><div className="card-title">Challenges</div>{challenges?.length ? challenges.slice(0, 3).map((c) => <ChallengeMini key={c.id} challenge={c} />) : <div className="empty">Noch keine Challenge. Admins können über den Challenge-Button eine erstellen.</div>}<button className="btn btn-secondary mt8" onClick={openChallenges}>Alle Challenges öffnen</button></div>
 
@@ -174,6 +186,7 @@ export default function Group({ group, sessions, challenges, back, invite, start
         const canOpenRoleMenu = canManageRoles && m.uid !== currentUid;
         const isSelected = canOpenRoleMenu && selectedMemberUid === m.uid;
         const canChangeThisRole = canOpenRoleMenu && !isOwner && !isGuest;
+        const canRemoveThisMember = canOpenRoleMenu && !isOwner && !isAdmin;
         return <div className={`member-role-card ${isSelected ? 'open' : ''} ${!canOpenRoleMenu ? 'locked' : ''}`} key={m.uid}>
           <button type="button" className="member-role-summary" disabled={!canOpenRoleMenu} onClick={() => setSelectedMemberUid(isSelected ? null : m.uid)}>
             <div className="row"><Avatar profile={m} className="ice" /><div className="member-role-text"><h3 title={m.name || 'Unbekannt'}><span className="member-one-line-name">{oneLineName(m.name)}</span>{m.uid === currentUid ? <span className="member-self-label">(Du)</span> : null}</h3><div className="sub">{roleLabel(m.role, m.uid)}</div></div></div>
@@ -187,6 +200,9 @@ export default function Group({ group, sessions, challenges, back, invite, start
               {isAdmin
                 ? <button className="tiny-btn" onClick={() => updateMemberRole(m.uid, 'member')}>Zu Mitglied machen</button>
                 : <button className="tiny-btn" onClick={() => updateMemberRole(m.uid, 'admin')}>Zum Admin machen</button>}
+            </div>}
+            {canRemoveThisMember && <div className="member-danger-actions">
+              <button type="button" className="member-remove-btn" onClick={() => confirmRemoveMember(m)}>Aus Gruppe entfernen</button>
             </div>}
           </div>}
         </div>;

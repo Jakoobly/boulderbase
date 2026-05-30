@@ -22,6 +22,8 @@ src/
       Challenges.jsx              # Gruppen-Challenges
       ChallengeMini.jsx           # kleine Challenge-Vorschau
       challengeHelpers.js         # Einheiten, Prozentrechnung
+    polls/
+      GroupPolls.jsx              # Gruppen-Abstimmungen und Terminabfragen
     chat/
       GroupChat.jsx               # Gruppenchat
       DirectChat.jsx              # Freundeschat + Wettbewerbe
@@ -47,7 +49,7 @@ src/
 
 - Login/Auth-State
 - aktive Ansicht (`screen`)
-- globale Daten wie Gruppen, Sessions, Challenges
+- globale Daten wie Gruppen, Sessions, Challenges, Abstimmungen
 - Firestore-Schreibaktionen
 - Weitergabe der nötigen Funktionen an Pages/Features
 
