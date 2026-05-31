@@ -38,7 +38,7 @@ export default function Profile({ profile, setProfile, saveProfile, metric, setM
     <div className="card chart-box"><div className="profile-summary-card"><div className="profile-summary-value">{(values[metric] || values.points)[0]}</div><div className="profile-summary-label">{(values[metric] || values.points)[1]}</div><div className="profile-summary-sub">{(values[metric] || values.points)[2]}</div></div></div>
     <div className="card"><div className="card-title">Letzte Matches</div>{history.length ? history.map((m) => <div className="list-item" key={m.id}><h3>{m.title}</h3><div className="sub">{safeDate(m.endedAt)} · {m.groupName} · {m.points} Punkte · {m.tops} Tops</div></div>) : <div className="empty">Noch keine vergangenen Matches.</div>}</div>
 
-    {settingsOpen && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
+    {settingsOpen && <div className="modal-backdrop settings-backdrop" onClick={() => setSettingsOpen(false)}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>

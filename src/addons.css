@@ -886,6 +886,9 @@
 .settings-icon-btn:active{
   transform:scale(.98);
 }
+.settings-backdrop{
+  align-items:center;
+}
 .settings-panel{
   width:min(420px,100%);
   max-height:88vh;
