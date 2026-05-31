@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { deleteUser, onAuthStateChanged, signOut } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, increment } from 'firebase/firestore';
+import { useLocation, useNavigate } from 'react-router-dom';
 import AuthScreen from './components/AuthScreen.jsx';
+import BetaGate from './components/BetaGate.jsx';
+import BottomNav from './components/BottomNav.jsx';
+import InviteModal from './components/InviteModal.jsx';
+import JoinGroupScreen from './components/JoinGroupScreen.jsx';
+import NotificationBell from './components/NotificationBell.jsx';
 import FriendsScreen from './friends/FriendsScreen.jsx';
 import Home from './pages/Home.jsx';
 import Profile from './pages/Profile.jsx';
@@ -12,36 +18,53 @@ import Results from './features/sessions/Results.jsx';
 import Challenges from './features/challenges/Challenges.jsx';
 import { auth, db } from './services/firebase.js';
 import { DEFAULT_CUSTOM_RULES, ROUTES } from './constants.js';
-import { code, emptyRouteState } from './utils.js';
+import { code, emptyRouteState, groupPath, routeMatchesGroup } from './utils.js';
 import { initialProfile } from './utils/profile.js';
 import { recalcParticipant } from './utils/scoring.js';
 import { findBadWord } from './utils/profanity.js';
 import './styles.css';
 import './addons.css';
 
+function initialNotificationsSeenAt() {
+  const stored = Number(localStorage.getItem('bb-notifications-seen-at') || 0);
+  if (stored) return stored;
+  const now = Date.now();
+  localStorage.setItem('bb-notifications-seen-at', String(now));
+  return now;
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
+function initialDismissedNotifications() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('bb-dismissed-notifications') || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [hasBetaAccess, setHasBetaAccess] = useState(() => localStorage.getItem('bb-beta-access') === 'true');
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [screen, setScreen] = useState('loading');
+  const [screen, setScreenState] = useState('loading');
   const [groups, setGroups] = useState([]);
   const [activeGroup, setActiveGroup] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [challenges, setChallenges] = useState([]);
   const [polls, setPolls] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [challengeNotifications, setChallengeNotifications] = useState([]);
+  const [friendRequestNotifications, setFriendRequestNotifications] = useState([]);
+  const [groupChatNotifications, setGroupChatNotifications] = useState([]);
+  const [directChatNotifications, setDirectChatNotifications] = useState([]);
+  const [notificationsSeenAt, setNotificationsSeenAt] = useState(initialNotificationsSeenAt);
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState(initialDismissedNotifications);
+  const [notificationTarget, setNotificationTarget] = useState(null);
+  const [challengeFocusId, setChallengeFocusId] = useState(null);
+  const [inviteGroup, setInviteGroup] = useState(null);
+  const [joinGroupTarget, setJoinGroupTarget] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
   const [toast, setToast] = useState('');
   const [profileMetric, setProfileMetric] = useState('points');
@@ -49,6 +72,25 @@ export default function App() {
 
   function notify(msg) { setToast(msg); setTimeout(() => setToast(''), 2300); }
   const safeName = () => profile?.name || user?.displayName || user?.email?.split('@')[0] || 'Boulderer';
+
+  function screenPath(nextScreen) {
+    if (nextScreen === 'home') return '/';
+    if (nextScreen === 'friends') return '/friends';
+    if (nextScreen === 'profile') return '/profile';
+    if (nextScreen === 'group' && activeGroup?.id) return groupPath(activeGroup);
+    if (nextScreen === 'challenges' && activeGroup?.id) return groupPath(activeGroup, '/challenges');
+    if (nextScreen === 'setup') return '/setup';
+    if (nextScreen === 'game' && activeSession?.id) return `/sessions/${activeSession.id}`;
+    if (nextScreen === 'results' && activeSession?.id) return `/sessions/${activeSession.id}/results`;
+    return null;
+  }
+
+  function setScreen(nextScreen, options = {}) {
+    if (nextScreen !== 'challenges') setChallengeFocusId(null);
+    setScreenState(nextScreen);
+    const path = screenPath(nextScreen);
+    if (path && location.pathname !== path) navigate(path, { replace: !!options.replace });
+  }
 
   useEffect(() => onAuthStateChanged(auth, async (u) => {
     setUser(u);
@@ -63,7 +105,8 @@ export default function App() {
     const p = snap.exists() ? { ...initialProfile(u), ...snap.data() } : initialProfile(u);
     if (!snap.exists()) await setDoc(ref, p);
     setProfile(p);
-    await restoreLastView(u.uid);
+    if (location.pathname !== '/') setScreenState('home');
+    else await restoreLastView(u.uid);
   }), []);
 
   useEffect(() => {
@@ -91,7 +134,8 @@ export default function App() {
             if (g.exists()) setActiveGroup({ id: g.id, ...g.data() });
           }
           listenSession(sessionId, data.status === 'active');
-          setScreen(data.status === 'finished' ? 'results' : 'game');
+          setScreenState(data.status === 'finished' ? 'results' : 'game');
+          navigate(`/sessions/${sessionId}${data.status === 'finished' ? '/results' : ''}`, { replace: true });
           return;
         }
       }
@@ -100,8 +144,10 @@ export default function App() {
     if ((view?.screen === 'group' || view?.screen === 'challenges') && view.groupId) {
       const g = await getDoc(doc(db, 'groups', view.groupId));
       if (g.exists() && g.data()?.members?.[uid]?.active) {
-        setActiveGroup({ id: g.id, ...g.data() });
-        setScreen(view.screen === 'challenges' ? 'challenges' : 'group');
+        const restoredGroup = { id: g.id, ...g.data() };
+        setActiveGroup(restoredGroup);
+        setScreenState(view.screen === 'challenges' ? 'challenges' : 'group');
+        navigate(groupPath(restoredGroup, view.screen === 'challenges' ? '/challenges' : ''), { replace: true });
         return;
       }
     }
@@ -115,10 +161,266 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!user?.uid || screen === 'loading' || screen === 'auth') return undefined;
+
+    let cancelled = false;
+    async function syncRoute() {
+      const parts = location.pathname.split('/').filter(Boolean);
+
+      if (parts.length === 0) {
+        setScreenState('home');
+        return;
+      }
+
+      if (parts[0] === 'friends') {
+        setScreenState('friends');
+        return;
+      }
+
+      if (parts[0] === 'profile') {
+        setScreenState('profile');
+        return;
+      }
+
+      if (parts[0] === 'setup') {
+        setScreenState('setup');
+        return;
+      }
+
+      if (parts[0] === 'join' && parts[1]) {
+        const groupId = parts[1];
+        const snap = await getDoc(doc(db, 'groups', groupId));
+        if (!cancelled && snap.exists()) {
+          setJoinGroupTarget({ id: snap.id, ...snap.data() });
+          setScreenState('join');
+        } else if (!cancelled) {
+          navigate('/', { replace: true });
+        }
+        return;
+      }
+
+      if (parts[0] === 'groups' && parts[1]) {
+        const routeGroup = decodeURIComponent(parts[1]);
+        const existing = groups.find((group) => routeMatchesGroup(routeGroup, group));
+        if (existing) {
+          if (!cancelled) setActiveGroup(existing);
+        } else if (activeGroup?.id !== routeGroup) {
+          if (!groups.length) return;
+          const snap = await getDoc(doc(db, 'groups', routeGroup));
+          if (!cancelled && snap.exists() && snap.data()?.members?.[user.uid]?.active) {
+            const fetchedGroup = { id: snap.id, ...snap.data() };
+            setActiveGroup(fetchedGroup);
+            navigate(groupPath(fetchedGroup, parts[2] === 'challenges' ? '/challenges' : ''), { replace: true });
+          } else if (!cancelled) {
+            navigate('/', { replace: true });
+            return;
+          }
+        }
+        if (!cancelled) setScreenState(parts[2] === 'challenges' ? 'challenges' : 'group');
+        return;
+      }
+
+      if (parts[0] === 'sessions' && parts[1]) {
+        if (activeSession?.id !== parts[1]) listenSession(parts[1], true);
+        setScreenState(parts[2] === 'results' ? 'results' : 'game');
+        return;
+      }
+
+      navigate('/', { replace: true });
+    }
+
+    syncRoute();
+    return () => { cancelled = true; };
+  }, [location.pathname, user?.uid, groups, activeGroup?.id, activeSession?.id]);
+
+  useEffect(() => {
     if (!user?.uid) return undefined;
     const q = query(collection(db, 'groups'), where(`members.${user.uid}.active`, '==', true));
     return onSnapshot(q, (snaps) => setGroups(snaps.docs.map((d) => ({ id: d.id, ...d.data() }))));
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || !groups.length) {
+      setNotifications([]);
+      setChallengeNotifications([]);
+      setGroupChatNotifications([]);
+      return undefined;
+    }
+
+    const groupIds = groups.map((group) => group.id).filter(Boolean);
+    const groupById = Object.fromEntries(groups.map((group) => [group.id, group]));
+    const chunks = [];
+    for (let i = 0; i < groupIds.length; i += 10) chunks.push(groupIds.slice(i, i + 10));
+
+    const buckets = new Map();
+    const challengeBuckets = new Map();
+    const chatBuckets = new Map();
+    const publish = () => {
+      const next = [...buckets.values()]
+        .flat()
+        .map((poll) => ({
+          id: poll.id,
+          groupId: poll.groupId,
+          groupName: poll.groupName || groupById[poll.groupId]?.name || 'Gruppe',
+          title: poll.title || 'Neue Abstimmung',
+          kind: poll.type === 'schedule' ? 'Terminabfrage' : 'Abstimmung',
+          createdBy: poll.createdBy || '',
+          createdAtMillis: Number(poll.createdAtMillis || 0),
+          type: 'poll',
+          subtitle: `${poll.type === 'schedule' ? 'Terminabfrage' : 'Abstimmung'} in ${poll.groupName || groupById[poll.groupId]?.name || 'Gruppe'}`
+        }))
+        .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      setNotifications(next);
+    };
+    const publishChallenges = () => {
+      const next = [...challengeBuckets.values()]
+        .flat()
+        .map((challenge) => ({
+          id: challenge.id,
+          groupId: challenge.groupId,
+          groupName: challenge.groupName || groupById[challenge.groupId]?.name || 'Gruppe',
+          title: challenge.title || 'Neue Challenge',
+          kind: 'Challenge',
+          createdBy: challenge.createdBy || '',
+          createdAtMillis: Number(challenge.createdAtMillis || 0),
+          type: 'challenge',
+          subtitle: `Challenge in ${challenge.groupName || groupById[challenge.groupId]?.name || 'Gruppe'}`
+        }))
+        .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      setChallengeNotifications(next);
+    };
+    const publishGroupChats = () => {
+      const next = [...chatBuckets.values()]
+        .flat()
+        .filter((message) => message.senderId !== user.uid)
+        .map((message) => ({
+          id: `group-chat-${message.groupId}-${message.id}`,
+          groupId: message.groupId,
+          groupName: groupById[message.groupId]?.name || 'Gruppe',
+          title: message.senderName ? `${message.senderName} hat geschrieben` : 'Neue Chatnachricht',
+          kind: 'Chat',
+          createdBy: message.senderId || '',
+          createdAtMillis: Number(message.createdAtMillis || 0),
+          type: 'group-chat',
+          subtitle: `Gruppenchat in ${groupById[message.groupId]?.name || 'Gruppe'}`
+        }))
+        .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      setGroupChatNotifications(next);
+    };
+
+    const unsubs = chunks.map((chunk, index) => {
+      const q = query(collection(db, 'groupPolls'), where('groupId', 'in', chunk));
+      return onSnapshot(q, (snaps) => {
+        buckets.set(index, snaps.docs.map((d) => ({ id: d.id, ...d.data() })));
+        publish();
+      });
+    });
+    const challengeUnsubs = chunks.map((chunk, index) => {
+      const q = query(collection(db, 'challenges'), where('groupId', 'in', chunk));
+      return onSnapshot(q, (snaps) => {
+        challengeBuckets.set(index, snaps.docs.map((d) => ({ id: d.id, ...d.data() })));
+        publishChallenges();
+      });
+    });
+    const chatUnsubs = groupIds.map((groupId) => {
+      const q = query(collection(db, 'groups', groupId, 'messages'), orderBy('createdAtMillis', 'desc'), limit(5));
+      return onSnapshot(q, (snaps) => {
+        chatBuckets.set(groupId, snaps.docs.map((d) => ({ id: d.id, groupId, ...d.data() })));
+        publishGroupChats();
+      });
+    });
+
+    return () => [...unsubs, ...challengeUnsubs, ...chatUnsubs].forEach((unsub) => unsub());
+  }, [groups, user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setFriendRequestNotifications([]);
+      return undefined;
+    }
+    const q = query(collection(db, 'friendRequests'), where('toUid', '==', user.uid), where('status', '==', 'pending'));
+    return onSnapshot(q, (snaps) => {
+      const next = snaps.docs.map((d) => {
+        const request = { id: d.id, ...d.data() };
+        const fromName = request.from?.name || 'Jemand';
+        return {
+          id: `friend-request-${request.id}`,
+          title: `${fromName} möchte dich hinzufügen`,
+          kind: 'Freundschaft',
+          createdBy: request.fromUid || '',
+          createdAtMillis: Number(request.createdAtMillis || 0),
+          type: 'friend-request',
+          subtitle: 'Neue Freundschaftsanfrage'
+        };
+      }).sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      setFriendRequestNotifications(next);
+    });
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setDirectChatNotifications([]);
+      return undefined;
+    }
+
+    const messageBuckets = new Map();
+    const messageUnsubs = new Map();
+    const publishDirectChats = () => {
+      const next = [...messageBuckets.values()]
+        .flat()
+        .filter((message) => message.senderId !== user.uid)
+        .map((message) => ({
+          id: `direct-chat-${message.chatId}-${message.id}`,
+          title: message.senderName ? `${message.senderName} hat dir geschrieben` : 'Neue Direktnachricht',
+          kind: 'Chat',
+          createdBy: message.senderId || '',
+          createdAtMillis: Number(message.createdAtMillis || 0),
+          type: 'direct-chat',
+          subtitle: 'Direktnachricht'
+        }))
+        .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      setDirectChatNotifications(next);
+    };
+
+    const chatQuery = query(collection(db, 'directChats'), where('members', 'array-contains', user.uid));
+    const unsubChats = onSnapshot(chatQuery, (snaps) => {
+      const activeChatIds = new Set(snaps.docs.map((d) => d.id));
+      for (const [chatId, unsub] of messageUnsubs.entries()) {
+        if (!activeChatIds.has(chatId)) {
+          unsub();
+          messageUnsubs.delete(chatId);
+          messageBuckets.delete(chatId);
+        }
+      }
+
+      snaps.docs.forEach((chatDoc) => {
+        if (messageUnsubs.has(chatDoc.id)) return;
+        const messagesQuery = query(collection(db, 'directChats', chatDoc.id, 'messages'), orderBy('createdAtMillis', 'desc'), limit(5));
+        const unsubMessages = onSnapshot(messagesQuery, (messageSnaps) => {
+          messageBuckets.set(chatDoc.id, messageSnaps.docs.map((d) => ({ id: d.id, chatId: chatDoc.id, ...d.data() })));
+          publishDirectChats();
+        });
+        messageUnsubs.set(chatDoc.id, unsubMessages);
+      });
+
+      publishDirectChats();
+    });
+
+    return () => {
+      unsubChats();
+      messageUnsubs.forEach((unsub) => unsub());
+    };
+  }, [user?.uid]);
+
+  const allNotifications = [
+    ...notifications,
+    ...challengeNotifications,
+    ...friendRequestNotifications,
+    ...groupChatNotifications,
+    ...directChatNotifications
+  ]
+    .filter((item) => !dismissedNotificationIds.includes(item.id))
+    .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
 
   useEffect(() => {
     if (!activeGroup?.id) return undefined;
@@ -130,7 +432,8 @@ export default function App() {
       const liveForMe = list.find((s) => s.status === 'active' && s.participants?.[user?.uid]);
       if (liveForMe && screen === 'group') {
         listenSession(liveForMe.id, true);
-        setScreen('game');
+        setScreenState('game');
+        navigate(`/sessions/${liveForMe.id}`);
       }
     });
     const cq = query(collection(db, 'challenges'), where('groupId', '==', activeGroup.id));
@@ -157,15 +460,17 @@ export default function App() {
       if (nextGroup?.id) {
         // Erst in die Gruppenansicht wechseln, dann die aktive Gruppe setzen.
         // Dadurch öffnet sich der Screen sofort auch dann, wenn Firestore beim Klick kurz verzögert reagiert.
-        setScreen('group');
+        setScreenState('group');
         setActiveGroup(nextGroup);
+        navigate(groupPath(nextGroup));
         return;
       }
 
       const s = await getDoc(doc(db, 'groups', groupOrId));
       if (!s.exists()) return notify('Gruppe nicht gefunden');
-      setScreen('group');
+      setScreenState('group');
       setActiveGroup({ id: s.id, ...s.data() });
+      navigate(groupPath({ id: s.id, ...s.data() }));
     } catch (error) {
       console.error('Gruppe konnte nicht geöffnet werden:', error);
       notify('Gruppe konnte nicht geöffnet werden');
@@ -250,6 +555,27 @@ export default function App() {
     const s = snaps.docs[0];
     await updateDoc(doc(db, 'groups', s.id), { [`members.${user.uid}`]: { uid: user.uid, name: safeName(), avatarColor: profile.avatarColor, avatarIcon: profile.avatarIcon, role: 'member', active: true, joinedAt: Date.now(), stats: { sessions: 0, points: 0, tops: 0, flashes: 0, best: 0 } } });
     await openGroup(s.id);
+  }
+
+  async function joinInvitedGroup() {
+    if (!joinGroupTarget?.id || !user?.uid || !profile) return;
+    const member = joinGroupTarget.members?.[user.uid];
+    if (!member?.active) {
+      await updateDoc(doc(db, 'groups', joinGroupTarget.id), {
+        [`members.${user.uid}`]: {
+          uid: user.uid,
+          name: safeName(),
+          avatarColor: profile.avatarColor,
+          avatarIcon: profile.avatarIcon,
+          role: 'member',
+          active: true,
+          joinedAt: Date.now(),
+          stats: { sessions: 0, points: 0, tops: 0, flashes: 0, best: 0 }
+        }
+      });
+      notify('Gruppe beigetreten');
+    }
+    await openGroup(joinGroupTarget.id);
   }
 
   function startSetup(kind) {
@@ -338,7 +664,8 @@ export default function App() {
       participants
     });
     listenSession(id, true);
-    setScreen('game');
+    setScreenState('game');
+    navigate(`/sessions/${id}`);
   }
 
   function listenSession(id, remember = false) {
@@ -348,14 +675,15 @@ export default function App() {
         localStorage.removeItem('bb-active-session');
         localStorage.removeItem('bb-current-view');
         setActiveSession(null);
-        setScreen('home');
+        setScreen('home', { replace: true });
         return;
       }
       const data = { id: s.id, ...s.data() };
       setActiveSession(data);
       if (data.status === 'finished') {
         localStorage.removeItem('bb-active-session');
-        setScreen('results');
+        setScreenState('results');
+        navigate(`/sessions/${data.id}/results`, { replace: true });
       }
     });
   }
@@ -421,7 +749,8 @@ export default function App() {
       });
       await updateDoc(doc(db, 'groups', activeSession.groupId), updates);
     }
-    setScreen('results');
+    setScreenState('results');
+    navigate(`/sessions/${activeSession.id}/results`);
   }
 
   async function createChallenge(form) {
@@ -485,6 +814,11 @@ export default function App() {
     if (!challengeId) return;
     await deleteDoc(doc(db, 'challenges', challengeId));
     notify('Challenge gelöscht');
+  }
+
+  function openChallengeScreen(challengeId = null) {
+    setChallengeFocusId(challengeId);
+    setScreen('challenges');
   }
 
   function canManageActiveGroup() {
@@ -556,6 +890,28 @@ export default function App() {
     }
   }
 
+  async function openNotificationTarget(item) {
+    if (!item) return;
+    if (item.type === 'friend-request') {
+      setNotificationTarget(null);
+      setScreen('friends');
+      return;
+    }
+    if (item.type === 'direct-chat') {
+      setNotificationTarget(null);
+      setScreen('friends');
+      return;
+    }
+    if (!item.groupId) return;
+    setNotificationTarget(['poll', 'challenge', 'group-chat'].includes(item.type) ? { type: item.type, id: item.id, groupId: item.groupId } : null);
+    await openGroup(item.groupId);
+    if (item.type === 'challenge') {
+      const group = groups.find((g) => g.id === item.groupId) || activeGroup || { id: item.groupId, name: item.groupName };
+      setScreenState('challenges');
+      navigate(groupPath(group, '/challenges'));
+    }
+  }
+
   async function voteGroupPoll(poll, optionIds) {
     if (!activeGroup?.id || !poll?.id) return;
     if (poll.status === 'closed' || (poll.closesAtMillis && poll.closesAtMillis <= Date.now())) return notify('Diese Abstimmung ist beendet');
@@ -616,20 +972,43 @@ export default function App() {
     }
   }
 
+  function markNotificationsSeen() {
+    const now = Date.now();
+    localStorage.setItem('bb-notifications-seen-at', String(now));
+    setNotificationsSeenAt(now);
+  }
+
+  function dismissNotification(notificationId) {
+    if (!notificationId) return;
+    setDismissedNotificationIds((current) => {
+      if (current.includes(notificationId)) return current;
+      const next = [notificationId, ...current].slice(0, 200);
+      localStorage.setItem('bb-dismissed-notifications', JSON.stringify(next));
+      return next;
+    });
+  }
+
+  if (!hasBetaAccess) return <BetaGate onUnlock={() => setHasBetaAccess(true)} />;
   if (screen === 'loading') return <div className="screen active"><div style={{ margin: 'auto' }}><div className="logo">Boulder<em>Base</em></div></div></div>;
   if (screen === 'auth') return <AuthScreen />;
   if (!user || !profile) return null;
 
+  const inviteUrl = inviteGroup?.id ? `${window.location.origin}/join/${inviteGroup.id}` : '';
+
   return <div className="app-shell">
     {toast && <div className="toast show">{toast}</div>}
+    {inviteGroup && <InviteModal group={inviteGroup} inviteUrl={inviteUrl} onClose={() => setInviteGroup(null)} onCopy={() => navigator.clipboard?.writeText(inviteUrl).then(() => notify('Einladungslink kopiert'))} />}
+    {screen === 'home' && <NotificationBell notifications={allNotifications} seenAt={notificationsSeenAt} currentUid={user.uid} onMarkSeen={markNotificationsSeen} onDismiss={dismissNotification} onOpenGroup={openNotificationTarget} />}
+    {screen === 'join' && <JoinGroupScreen group={joinGroupTarget} isMember={!!joinGroupTarget?.members?.[user.uid]?.active} join={joinInvitedGroup} back={() => setScreen('home')} />}
     {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
     {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} />}
     {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} deleteProfile={deleteProfile} />}
-    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} polls={polls} back={() => setScreen('home')} invite={() => navigator.clipboard?.writeText(activeGroup.code).then(() => notify('Code kopiert'))} start={() => startSetup('group')} openChallenges={() => setScreen('challenges')} editGroup={updateGroup} updateMemberRole={updateMemberRole} removeGroupMember={removeGroupMember} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreen('game'); }} sendMessage={addGroupMessage} createPoll={createGroupPoll} votePoll={voteGroupPoll} updatePoll={updateGroupPoll} deletePoll={deleteGroupPoll} />}
-    {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}
+    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} polls={polls} focusPollId={notificationTarget?.type === 'poll' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : null} focusPanel={notificationTarget?.type === 'group-chat' && notificationTarget?.groupId === activeGroup.id ? 'chat' : null} back={() => setScreen('home')} invite={() => setInviteGroup(activeGroup)} start={() => startSetup('group')} openChallenges={() => openChallengeScreen()} openChallenge={openChallengeScreen} editGroup={updateGroup} updateMemberRole={updateMemberRole} removeGroupMember={removeGroupMember} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreenState('game'); navigate(`/sessions/${id}`); }} sendMessage={addGroupMessage} createPoll={createGroupPoll} votePoll={voteGroupPoll} updatePoll={updateGroupPoll} deletePoll={deleteGroupPoll} />}
+    {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} focusChallengeId={notificationTarget?.type === 'challenge' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : challengeFocusId} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}
     {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
     {screen === 'game' && activeSession && <Game session={activeSession} user={user} updateRoute={updateRoute} finish={finishSession} />}
     {screen === 'results' && activeSession && <Results session={activeSession} back={() => activeSession.groupId ? openGroup(activeSession.groupId) : setScreen('home')} />}
+    <BottomNav profile={profile} screen={screen} setScreen={setScreen} />
   </div>;
 }
 

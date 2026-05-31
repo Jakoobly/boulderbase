@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Avatar from '../../components/Avatar.jsx';
 import { rank, safeDate } from '../../utils.js';
 import { CHALLENGE_UNITS, challengePercent, unitLabel, unitStep } from './challengeHelpers.js';
 
-export default function Challenges({ group, challenges, currentUid, back, createChallenge, addProgress, deleteChallenge }) {
+export default function Challenges({ group, challenges, focusChallengeId = null, currentUid, back, createChallenge, addProgress, deleteChallenge }) {
   const [form, setForm] = useState({ title: '', dueDate: '2026-12-31', unit: 'min', target: 100 });
   const [inputs, setInputs] = useState({});
   const [showForm, setShowForm] = useState(false);
@@ -15,6 +15,14 @@ export default function Challenges({ group, challenges, currentUid, back, create
   const selectableMembers = canAdmin ? members : (currentMember ? [currentMember] : []);
   const UNASSIGNED_MEMBER = '__unassigned__';
   function inputKey(challengeId, field) { return `${challengeId}-${field}`; }
+  useEffect(() => {
+    if (!focusChallengeId || !challenges.some((challenge) => challenge.id === focusChallengeId)) return undefined;
+    setOpenId(focusChallengeId);
+    const timeout = setTimeout(() => {
+      document.getElementById(`challenge-${focusChallengeId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => clearTimeout(timeout);
+  }, [focusChallengeId, challenges]);
   async function submitChallenge(e) {
     e.preventDefault();
     if (!form.title.trim()) return;
@@ -40,7 +48,7 @@ export default function Challenges({ group, challenges, currentUid, back, create
       const percent = challengePercent(c);
       const rows = Object.values(c.progressBy || {}).sort((a, b) => (b.value || 0) - (a.value || 0));
       const open = openId === c.id;
-      return <div className="challenge-card clickable" key={c.id} onClick={() => setOpenId(open ? null : c.id)}>
+      return <div id={`challenge-${c.id}`} className={`challenge-card clickable ${focusChallengeId === c.id ? 'focused-poll' : ''}`} key={c.id} onClick={() => setOpenId(open ? null : c.id)}>
         <div className="challenge-head"><div><h3>{c.title}</h3><div className="sub">bis {safeDate(c.dueDate)} · Ziel: {Number(c.target || 0).toLocaleString('de-DE')} {unitLabel(c.unit)}</div></div><span className="pill green">{percent}%</span></div>
         <div className="progress-track challenge-track"><div className="progress-fill" style={{ width: `${percent}%` }} /></div>
         <div className="challenge-numbers"><span>{Number(c.totalProgress || 0).toLocaleString('de-DE')} / {Number(c.target || 0).toLocaleString('de-DE')} {unitLabel(c.unit)}</span><span>{rows.length} Beiträge</span></div>

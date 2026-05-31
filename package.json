@@ -15,8 +15,10 @@
     "@vitejs/plugin-react": "latest",
     "firebase": "latest",
     "lucide-react": "latest",
+    "qrcode": "^1.5.4",
     "react": "latest",
     "react-dom": "latest",
+    "react-router-dom": "^7.16.0",
     "vite": "latest"
   },
   "devDependencies": {

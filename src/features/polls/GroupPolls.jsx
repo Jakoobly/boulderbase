@@ -103,7 +103,7 @@ function defaultForm(type = 'poll') {
   };
 }
 
-export default function GroupPolls({ group, polls = [], currentUid, createPoll, votePoll, updatePoll, deletePoll, activeOnly = false, hideHeaderAction = false, hideWhenEmpty = false, composerOpen = false, onComposerClose = () => {} }) {
+export default function GroupPolls({ group, polls = [], focusPollId = null, currentUid, createPoll, votePoll, updatePoll, deletePoll, activeOnly = false, hideHeaderAction = false, hideWhenEmpty = false, composerOpen = false, onComposerClose = () => {} }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(defaultForm());
   const [draftVotes, setDraftVotes] = useState({});
@@ -184,8 +184,21 @@ function removeOption(optionId) {
 
   if (hideWhenEmpty && !showForm && visiblePolls.length === 0) return null;
 
+  const headerCanToggle = canAdmin && hideHeaderAction;
+
   return <div className="card">
-    <div className="feed-head">
+    <div
+      className={`feed-head ${headerCanToggle ? 'poll-toggle-head' : ''}`}
+      role={headerCanToggle ? 'button' : undefined}
+      tabIndex={headerCanToggle ? 0 : undefined}
+      onClick={headerCanToggle ? toggleForm : undefined}
+      onKeyDown={headerCanToggle ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleForm();
+        }
+      } : undefined}
+    >
       <div>
         <div className="card-title">Abstimmungen</div>
         <h3>Planung in der Gruppe</h3>
@@ -249,7 +262,7 @@ function removeOption(optionId) {
         const selected = draftVotes[poll.id] || poll.votes?.[currentUid]?.optionIds || [];
         const missingCount = Math.max(0, members.length - totalVotes);
         if (closed) {
-          return <div className="poll-result-banner" key={poll.id}>
+          return <div id={`poll-${poll.id}`} className={`poll-result-banner ${focusPollId === poll.id ? 'focused-poll' : ''}`} key={poll.id}>
             <div>
               <div className="poll-kicker">{poll.type === 'schedule' ? 'Terminabfrage beendet' : 'Abstimmung beendet'}</div>
               <strong>{poll.title}</strong>
@@ -258,7 +271,7 @@ function removeOption(optionId) {
             {canAdmin && <button type="button" className="tiny-btn danger-tiny-btn" title="Löschen" onClick={() => { if (confirm('Ergebnis wirklich löschen?')) deletePoll(poll.id); }}>x</button>}
           </div>;
         }
-        return <div className={`poll-card ${closed ? 'closed' : ''}`} key={poll.id}>
+        return <div id={`poll-${poll.id}`} className={`poll-card ${closed ? 'closed' : ''} ${focusPollId === poll.id ? 'focused-poll' : ''}`} key={poll.id}>
           <div className="poll-head">
             <div>
               <div className="poll-kicker">{poll.type === 'schedule' ? 'Terminabfrage' : 'Abstimmung'}{closed ? ' · beendet' : ''}</div>

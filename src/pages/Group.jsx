@@ -88,7 +88,7 @@ function leaderboardValue(member, metric, monthPointsByMember = {}) {
   return s.points || 0;
 }
 
-export default function Group({ group, sessions, challenges, polls = [], back, invite, start, openChallenges, editGroup, updateMemberRole, removeGroupMember, deleteGroup, currentUid, openSession, sendMessage, createPoll, votePoll, updatePoll, deletePoll }) {
+export default function Group({ group, sessions, challenges, polls = [], focusPollId = null, focusPanel = null, back, invite, start, openChallenges, openChallenge, editGroup, updateMemberRole, removeGroupMember, deleteGroup, currentUid, openSession, sendMessage, createPoll, votePoll, updatePoll, deletePoll }) {
   const [personalizeOpen, setPersonalizeOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteName, setDeleteName] = useState('');
@@ -120,8 +120,19 @@ export default function Group({ group, sessions, challenges, polls = [], back, i
     setChatLastRead(newest);
   }, [activeGroupPanel, chatMessages, group.id]);
 
+  useEffect(() => {
+    if (focusPanel) setActiveGroupPanel(focusPanel);
+  }, [focusPanel]);
+
   const unreadChatCount = chatMessages.filter((m) => Number(m.createdAtMillis || 0) > chatLastRead && m.senderId !== currentUid).length;
 
+  useEffect(() => {
+    if (!focusPollId || !polls.some((poll) => poll.id === focusPollId)) return undefined;
+    const timeout = setTimeout(() => {
+      document.getElementById(`poll-${focusPollId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => clearTimeout(timeout);
+  }, [focusPollId, polls]);
 
   function roleLabel(role, uid) {
     if (uid === group.createdBy || role === 'owner') return 'Ersteller';
@@ -159,9 +170,9 @@ export default function Group({ group, sessions, challenges, polls = [], back, i
     </div>
 
 
-    <GroupPolls group={group} polls={polls} currentUid={currentUid} createPoll={createPoll} votePoll={votePoll} updatePoll={updatePoll} deletePoll={deletePoll} activeOnly hideHeaderAction hideWhenEmpty composerOpen={pollComposerOpen} onComposerClose={() => setPollComposerOpen(false)} />
+    <GroupPolls group={group} polls={polls} focusPollId={focusPollId} currentUid={currentUid} createPoll={createPoll} votePoll={votePoll} updatePoll={updatePoll} deletePoll={deletePoll} activeOnly hideHeaderAction hideWhenEmpty composerOpen={pollComposerOpen} onComposerClose={() => setPollComposerOpen(false)} />
 
-    <div className="card"><div className="card-title">Challenges</div>{challenges?.length ? challenges.slice(0, 3).map((c) => <ChallengeMini key={c.id} challenge={c} />) : <div className="empty">Noch keine Challenge. Admins können über den Challenge-Button eine erstellen.</div>}<button className="btn btn-secondary mt8" onClick={openChallenges}>Alle Challenges öffnen</button></div>
+    <div className="card"><div className="card-title">Challenges</div>{challenges?.length ? challenges.slice(0, 3).map((c) => <ChallengeMini key={c.id} challenge={c} onClick={() => openChallenge(c.id)} />) : <div className="empty">Noch keine Challenge. Admins können über den Challenge-Button eine erstellen.</div>}</div>
 
     <div className="card group-panel-card">
       <div className="group-section-tabs" role="tablist" aria-label="Gruppenbereiche">
