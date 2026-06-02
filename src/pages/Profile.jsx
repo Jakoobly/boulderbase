@@ -3,10 +3,14 @@ import { Settings } from 'lucide-react';
 import Avatar from '../components/Avatar.jsx';
 import { safeDate } from '../utils.js';
 import PersonalizeModal from '../components/PersonalizeModal.jsx';
+import ProfileQrModal from '../components/ProfileQrModal.jsx';
+import PersonalChallenges from '../features/challenges/PersonalChallenges.jsx';
 
-export default function Profile({ profile, setProfile, saveProfile, metric, setMetric, back, logout, deleteProfile }) {
+export default function Profile({ user, profile, setProfile, saveProfile, metric, setMetric, back, logout, deleteProfile, notify, personalChallenges = [], createPersonalChallenge, addPersonalChallengeProgress, deletePersonalChallenge }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [personalizeOpen, setPersonalizeOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [profileSection, setProfileSection] = useState('stats');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const history = profile.matchHistory || [];
   const avg = history.length ? Math.round(history.reduce((a, m) => a + (m.points || 0), 0) / history.length) : 0;
@@ -34,9 +38,15 @@ export default function Profile({ profile, setProfile, saveProfile, metric, setM
       <div className="profile-edit-head"><Avatar profile={profile} className="big" /><div><h2>{profile.name}</h2><div className="sub">{profile.status || 'Keine Beschreibung'}</div></div></div>
     </div>
 
-    <div className="tabs"><button className={`tab ${metric === 'points' ? 'active' : ''}`} onClick={() => setMetric('points')}>Punkte</button><button className={`tab ${metric === 'tops' ? 'active' : ''}`} onClick={() => setMetric('tops')}>Tops</button><button className={`tab ${metric === 'zones' ? 'active' : ''}`} onClick={() => setMetric('zones')}>Zones</button></div>
-    <div className="card chart-box"><div className="profile-summary-card"><div className="profile-summary-value">{(values[metric] || values.points)[0]}</div><div className="profile-summary-label">{(values[metric] || values.points)[1]}</div><div className="profile-summary-sub">{(values[metric] || values.points)[2]}</div></div></div>
-    <div className="card"><div className="card-title">Letzte Matches</div>{history.length ? history.map((m) => <div className="list-item" key={m.id}><h3>{m.title}</h3><div className="sub">{safeDate(m.endedAt)} · {m.groupName} · {m.points} Punkte · {m.tops} Tops</div></div>) : <div className="empty">Noch keine vergangenen Matches.</div>}</div>
+    <div className="tabs profile-section-tabs"><button className={`tab ${profileSection === 'stats' ? 'active' : ''}`} onClick={() => setProfileSection('stats')}>Statistiken</button><button className={`tab ${profileSection === 'challenges' ? 'active' : ''}`} onClick={() => setProfileSection('challenges')}>Challenges</button></div>
+
+    {profileSection === 'stats' && <>
+      <div className="tabs profile-metric-tabs"><button className={`tab ${metric === 'points' ? 'active' : ''}`} onClick={() => setMetric('points')}>Punkte</button><button className={`tab ${metric === 'tops' ? 'active' : ''}`} onClick={() => setMetric('tops')}>Tops</button><button className={`tab ${metric === 'zones' ? 'active' : ''}`} onClick={() => setMetric('zones')}>Zones</button></div>
+      <div className="card chart-box"><div className="profile-summary-card"><div className="profile-summary-value">{(values[metric] || values.points)[0]}</div><div className="profile-summary-label">{(values[metric] || values.points)[1]}</div><div className="profile-summary-sub">{(values[metric] || values.points)[2]}</div></div></div>
+      <div className="card"><div className="card-title">Letzte Matches</div>{history.length ? history.map((m) => <div className="list-item" key={m.id}><h3>{m.title}</h3><div className="sub">{safeDate(m.endedAt)} · {m.groupName} · {m.points} Punkte · {m.tops} Tops</div></div>) : <div className="empty">Noch keine vergangenen Matches.</div>}</div>
+    </>}
+
+    {profileSection === 'challenges' && <PersonalChallenges challenges={personalChallenges} createChallenge={createPersonalChallenge} addProgress={addPersonalChallengeProgress} deleteChallenge={deletePersonalChallenge} />}
 
     {settingsOpen && <div className="modal-backdrop settings-backdrop" onClick={() => setSettingsOpen(false)}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
@@ -49,12 +59,14 @@ export default function Profile({ profile, setProfile, saveProfile, metric, setM
         </div>
         <div className="settings-list">
           <button type="button" className="settings-row" onClick={() => { setSettingsOpen(false); setPersonalizeOpen(true); }}><strong>Name, Profilbild und Beschreibung</strong><span>Profil bearbeiten</span></button>
+          <button type="button" className="settings-row" onClick={() => { setSettingsOpen(false); setQrOpen(true); }}><strong>QR-Code</strong><span>Profil zum Hinzufügen teilen</span></button>
           <button type="button" className="settings-row" onClick={logout}><strong>Logout</strong><span>Von diesem Gerät abmelden</span></button>
           <button type="button" className="settings-row danger-settings-row" onClick={() => setDeleteConfirmOpen(true)}><strong>Profil löschen</strong><span>Dauerhaft entfernen</span></button>
         </div>
       </div>
     </div>}
     {personalizeOpen && <PersonalizeModal title="Profil anpassen" value={{ ...profile, description: profile.status || '' }} descriptionLabel="Beschreibung" onClose={() => setPersonalizeOpen(false)} onSave={savePersonalization} dangerAction={{ label: 'Profil löschen', onClick: () => setDeleteConfirmOpen(true) }} />}
+    {qrOpen && <ProfileQrModal user={user} profile={profile} onClose={() => setQrOpen(false)} onCopy={(url) => navigator.clipboard?.writeText(url).then(() => { notify?.('Profil-Link kopiert'); setQrOpen(false); })} />}
     {deleteConfirmOpen && <div className="delete-popup-backdrop" onClick={() => setDeleteConfirmOpen(false)}>
       <div className="delete-popup" onClick={(e) => e.stopPropagation()}>
         <div className="delete-confirm-title compact-delete-title">Profil löschen</div>

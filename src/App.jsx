@@ -9,6 +9,7 @@ import InviteModal from './components/InviteModal.jsx';
 import JoinGroupScreen from './components/JoinGroupScreen.jsx';
 import NotificationBell from './components/NotificationBell.jsx';
 import FriendsScreen from './friends/FriendsScreen.jsx';
+import Groups from './pages/Groups.jsx';
 import Home from './pages/Home.jsx';
 import Profile from './pages/Profile.jsx';
 import Group from './pages/Group.jsx';
@@ -53,6 +54,7 @@ export default function App() {
   const [activeGroup, setActiveGroup] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [challenges, setChallenges] = useState([]);
+  const [personalChallenges, setPersonalChallenges] = useState([]);
   const [polls, setPolls] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [challengeNotifications, setChallengeNotifications] = useState([]);
@@ -75,6 +77,7 @@ export default function App() {
 
   function screenPath(nextScreen) {
     if (nextScreen === 'home') return '/';
+    if (nextScreen === 'groups') return '/groups';
     if (nextScreen === 'friends') return '/friends';
     if (nextScreen === 'profile') return '/profile';
     if (nextScreen === 'group' && activeGroup?.id) return groupPath(activeGroup);
@@ -152,7 +155,7 @@ export default function App() {
       }
     }
 
-    if (view?.screen === 'profile' || view?.screen === 'friends') {
+    if (view?.screen === 'profile' || view?.screen === 'friends' || view?.screen === 'groups') {
       setScreen(view.screen);
       return;
     }
@@ -174,6 +177,11 @@ export default function App() {
 
       if (parts[0] === 'friends') {
         setScreenState('friends');
+        return;
+      }
+
+      if (parts[0] === 'groups' && parts.length === 1) {
+        setScreenState('groups');
         return;
       }
 
@@ -237,6 +245,20 @@ export default function App() {
     if (!user?.uid) return undefined;
     const q = query(collection(db, 'groups'), where(`members.${user.uid}.active`, '==', true));
     return onSnapshot(q, (snaps) => setGroups(snaps.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setPersonalChallenges([]);
+      return undefined;
+    }
+    const q = query(collection(db, 'personalChallenges'), where('ownerUid', '==', user.uid));
+    return onSnapshot(q, (snaps) => {
+      const list = snaps.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.completedAtMillis ? 1 : 0) - (b.completedAtMillis ? 1 : 0) || (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
+      setPersonalChallenges(list);
+    });
   }, [user?.uid]);
 
   useEffect(() => {
@@ -542,7 +564,7 @@ export default function App() {
     setActiveSession(null);
     setSessions([]);
     setPolls([]);
-    setScreen('home');
+    setScreen('groups');
     notify('Gruppe gelöscht');
   }
 
@@ -816,6 +838,49 @@ export default function App() {
     notify('Challenge gelöscht');
   }
 
+  async function createPersonalChallenge(form) {
+    if (!user?.uid) return;
+    const id = crypto.randomUUID();
+    const target = Math.max(1, Number(form.target) || 1);
+    await setDoc(doc(db, 'personalChallenges', id), {
+      ownerUid: user.uid,
+      createdBy: user.uid,
+      title: form.title.trim(),
+      dueDate: form.dueDate,
+      unit: form.unit || 'min',
+      target,
+      totalProgress: 0,
+      status: 'active',
+      createdAt: serverTimestamp(),
+      createdAtMillis: Date.now(),
+      updatedAtMillis: Date.now()
+    });
+    notify('Persönliche Challenge erstellt');
+  }
+
+  async function addPersonalChallengeProgress(challenge, amount) {
+    const value = Math.max(0, Number(amount) || 0);
+    if (!challenge?.id || value <= 0) return notify('Bitte einen Fortschritt größer als 0 eingeben');
+    const nextTotal = Number(challenge.totalProgress || 0) + value;
+    const target = Math.max(1, Number(challenge.target || 1));
+    const updates = {
+      totalProgress: increment(value),
+      updatedAtMillis: Date.now()
+    };
+    if (nextTotal >= target && !challenge.completedAtMillis) {
+      updates.status = 'completed';
+      updates.completedAtMillis = Date.now();
+    }
+    await updateDoc(doc(db, 'personalChallenges', challenge.id), updates);
+    notify('Fortschritt gespeichert');
+  }
+
+  async function deletePersonalChallenge(challengeId) {
+    if (!challengeId) return;
+    await deleteDoc(doc(db, 'personalChallenges', challengeId));
+    notify('Persönliche Challenge gelöscht');
+  }
+
   function openChallengeScreen(challengeId = null) {
     setChallengeFocusId(challengeId);
     setScreen('challenges');
@@ -1000,10 +1065,11 @@ export default function App() {
     {inviteGroup && <InviteModal group={inviteGroup} inviteUrl={inviteUrl} onClose={() => setInviteGroup(null)} onCopy={() => navigator.clipboard?.writeText(inviteUrl).then(() => notify('Einladungslink kopiert'))} />}
     {screen === 'home' && <NotificationBell notifications={allNotifications} seenAt={notificationsSeenAt} currentUid={user.uid} onMarkSeen={markNotificationsSeen} onDismiss={dismissNotification} onOpenGroup={openNotificationTarget} />}
     {screen === 'join' && <JoinGroupScreen group={joinGroupTarget} isMember={!!joinGroupTarget?.members?.[user.uid]?.active} join={joinInvitedGroup} back={() => setScreen('home')} />}
-    {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} />}
-    {screen === 'home' && <Home profile={profile} groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} startFree={() => startSetup('free')} setScreen={setScreen} />}
-    {screen === 'profile' && <Profile profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} deleteProfile={deleteProfile} />}
-    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} polls={polls} focusPollId={notificationTarget?.type === 'poll' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : null} focusPanel={notificationTarget?.type === 'group-chat' && notificationTarget?.groupId === activeGroup.id ? 'chat' : null} back={() => setScreen('home')} invite={() => setInviteGroup(activeGroup)} start={() => startSetup('group')} openChallenges={() => openChallengeScreen()} openChallenge={openChallengeScreen} editGroup={updateGroup} updateMemberRole={updateMemberRole} removeGroupMember={removeGroupMember} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreenState('game'); navigate(`/sessions/${id}`); }} sendMessage={addGroupMessage} createPoll={createGroupPoll} votePoll={voteGroupPoll} updatePoll={updateGroupPoll} deletePoll={deleteGroupPoll} />}
+    {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} inviteUid={new URLSearchParams(location.search).get('add') || ''} />}
+    {screen === 'groups' && <Groups groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} />}
+    {screen === 'home' && <Home profile={profile} startFree={() => startSetup('free')} />}
+    {screen === 'profile' && <Profile user={user} profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} deleteProfile={deleteProfile} notify={notify} personalChallenges={personalChallenges} createPersonalChallenge={createPersonalChallenge} addPersonalChallengeProgress={addPersonalChallengeProgress} deletePersonalChallenge={deletePersonalChallenge} />}
+    {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} polls={polls} focusPollId={notificationTarget?.type === 'poll' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : null} focusPanel={notificationTarget?.type === 'group-chat' && notificationTarget?.groupId === activeGroup.id ? 'chat' : null} back={() => setScreen('groups')} invite={() => setInviteGroup(activeGroup)} start={() => startSetup('group')} openChallenges={() => openChallengeScreen()} openChallenge={openChallengeScreen} editGroup={updateGroup} updateMemberRole={updateMemberRole} removeGroupMember={removeGroupMember} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreenState('game'); navigate(`/sessions/${id}`); }} sendMessage={addGroupMessage} createPoll={createGroupPoll} votePoll={voteGroupPoll} updatePoll={updateGroupPoll} deletePoll={deleteGroupPoll} />}
     {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} focusChallengeId={notificationTarget?.type === 'challenge' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : challengeFocusId} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}
     {screen === 'setup' && <Setup setup={setup} setSetup={setSetup} group={activeGroup} profile={profile} user={user} back={() => setScreen(setup.kind === 'group' ? 'group' : 'home')} create={createSession} />}
     {screen === 'game' && activeSession && <Game session={activeSession} user={user} updateRoute={updateRoute} finish={finishSession} />}

@@ -4,7 +4,7 @@ import FriendRequests from './FriendRequests.jsx';
 import FriendsList from './FriendsList.jsx';
 import { useFriends } from '../hooks/useFriends.js';
 
-export default function FriendsScreen({ user, profile, setScreen, notify }) {
+export default function FriendsScreen({ user, profile, setScreen, notify, inviteUid }) {
   const friendState = useFriends(user);
 
   return (
@@ -18,6 +18,7 @@ export default function FriendsScreen({ user, profile, setScreen, notify }) {
         user={user}
         profile={profile}
         friendStatus={friendState.friendStatus}
+        inviteUid={inviteUid}
         onChanged={friendState.reloadFriends}
         notify={notify}
       />

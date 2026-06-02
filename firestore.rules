@@ -157,6 +157,24 @@ service cloud.firestore {
         && isGroupAdmin(groupDoc(resource.data.groupId).data);
     }
 
+    match /personalChallenges/{challengeId} {
+      allow read: if signedIn()
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.unit is string
+        && request.resource.data.target is number
+        && request.resource.data.target > 0;
+      allow update: if signedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdBy == resource.data.createdBy;
+      allow delete: if signedIn()
+        && resource.data.ownerUid == request.auth.uid;
+    }
+
     match /groupPolls/{pollId} {
       allow read: if signedIn()
         && resource.data.groupId is string

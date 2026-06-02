@@ -1,11 +1,13 @@
 // src/friends/FriendsList.jsx
 import { useMemo, useState } from 'react';
 import Avatar from '../components/Avatar.jsx';
+import ProfileQrModal from '../components/ProfileQrModal.jsx';
 import { removeFriend } from '../services/friendService.js';
 
 export default function FriendsList({ user, friends, onChanged, notify }) {
   const [search, setSearch] = useState('');
   const [selectedFriend, setSelectedFriend] = useState(null);
+  const [qrFriend, setQrFriend] = useState(null);
   const filteredFriends = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return friends;
@@ -40,9 +42,11 @@ export default function FriendsList({ user, friends, onChanged, notify }) {
           <div className="stat-box"><div className="stat-num">{selectedFriend.points || 0}</div><div className="stat-lbl">Punkte</div></div>
           <div className="stat-box"><div className="stat-num">{selectedFriend.sessions || 0}</div><div className="stat-lbl">Sessions</div></div>
         </div>
+        <button type="button" className="btn btn-secondary compact profile-qr-action" onClick={() => setQrFriend(selectedFriend)}>QR-Code</button>
         <div className="friend-danger-area">
           <button type="button" className="friend-remove-link" onClick={() => remove(selectedFriend.uid)}>Freundschaft beenden</button>
         </div>
+        {qrFriend && <ProfileQrModal user={{ uid: qrFriend.uid }} profile={qrFriend} onClose={() => setQrFriend(null)} onCopy={(url) => navigator.clipboard?.writeText(url).then(() => { notify?.('Profil-Link kopiert'); setQrFriend(null); })} />}
       </section>
     );
   }

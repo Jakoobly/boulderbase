@@ -34,6 +34,13 @@ export async function searchUsers(searchTerm, currentUid) {
     .slice(0, 10);
 }
 
+export async function getUserProfile(uid) {
+  if (!uid) throw new Error('Nutzer nicht gefunden.');
+  const snap = await getDoc(doc(db, 'users', uid));
+  if (!snap.exists()) throw new Error('Nutzer nicht gefunden.');
+  return { uid: snap.id, ...snap.data() };
+}
+
 export async function getFriendState(uid) {
   const [friendsSnap, incomingSnap, outgoingSnap] = await Promise.all([
     getDocs(collection(db, 'users', uid, 'friends')),

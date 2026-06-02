@@ -947,3 +947,43 @@ html{
   min-height:100svh;
   flex:0 0 auto;
 }
+/* Profile QR */
+.profile-qr-person{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  border:.5px solid var(--border);
+  border-radius:12px;
+  background:var(--surface2);
+  padding:10px;
+  margin-bottom:12px;
+}
+.profile-qr-person > div{min-width:0}
+.profile-qr-person strong{
+  display:block;
+  font-size:14px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.profile-qr-person span{
+  display:block;
+  color:var(--muted);
+  font-size:12px;
+  margin-top:2px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.profile-qr-action{margin-top:10px}
+.profile-section-tabs{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+.profile-section-tabs .tab{
+  text-align:center;
+}
+.profile-metric-tabs{
+  margin-top:-2px;
+}

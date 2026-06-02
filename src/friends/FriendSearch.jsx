@@ -1,12 +1,36 @@
 // src/friends/FriendSearch.jsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Avatar from '../components/Avatar.jsx';
-import { searchUsers, sendFriendRequest } from '../services/friendService.js';
+import { getUserProfile, searchUsers, sendFriendRequest } from '../services/friendService.js';
 
-export default function FriendSearch({ user, profile, friendStatus, onChanged, notify }) {
+export default function FriendSearch({ user, profile, friendStatus, inviteUid, onChanged, notify }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadInvitedUser() {
+      if (!inviteUid) return;
+      if (inviteUid === user.uid) {
+        notify?.('Das ist dein eigener QR-Code');
+        return;
+      }
+      setLoading(true);
+      try {
+        const invitedUser = await getUserProfile(inviteUid);
+        if (cancelled) return;
+        setTerm(invitedUser.name || invitedUser.username || '');
+        setResults([invitedUser]);
+      } catch (e) {
+        if (!cancelled) notify?.(e.message || 'QR-Code konnte nicht geladen werden');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    loadInvitedUser();
+    return () => { cancelled = true; };
+  }, [inviteUid, user.uid]);
 
   async function runSearch() {
     setLoading(true);

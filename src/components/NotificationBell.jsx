@@ -28,10 +28,6 @@ export default function NotificationBell({ notifications = [], seenAt = 0, curre
     return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
   }, []);
 
-  function toggleOpen() {
-    onMarkSeen();
-  }
-
   function openNotification(item) {
     detailsRef.current?.removeAttribute('open');
     onDismiss?.(item.id);
@@ -39,15 +35,17 @@ export default function NotificationBell({ notifications = [], seenAt = 0, curre
   }
 
   return (
-    <details ref={detailsRef} className="notification-bell" onToggle={(event) => event.currentTarget.open && toggleOpen()}>
+    <details ref={detailsRef} className="notification-bell">
       <summary className="notification-trigger" aria-label="Benachrichtigungen">
         <Bell size={21} strokeWidth={2.4} />
         {unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
       </summary>
       <div className="notification-panel">
         <div className="notification-head">
-          <strong>Neuigkeiten</strong>
-          <span>{unreadCount ? `${unreadCount} neu` : 'Aktuell'}</span>
+          <div>
+            <strong>Neuigkeiten</strong>
+          </div>
+          {unreadCount > 0 && <button type="button" className="notification-read-all" onClick={onMarkSeen}>Als gelesen markieren</button>}
         </div>
         <div className="notification-list">
           {recent.length ? recent.map((item) => (

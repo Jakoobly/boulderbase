@@ -1,10 +1,11 @@
-import { Home, Users } from 'lucide-react';
+import { Home, UserRound, Users } from 'lucide-react';
 import Avatar from './Avatar.jsx';
 
 export default function BottomNav({ profile, screen, setScreen }) {
   const items = [
     { key: 'home', label: 'Start', icon: <Home size={23} strokeWidth={2.4} />, action: () => setScreen('home') },
-    { key: 'friends', label: 'Freunde', icon: <Users size={23} strokeWidth={2.4} />, action: () => setScreen('friends') },
+    { key: 'groups', label: 'Gruppen', icon: <Users size={23} strokeWidth={2.4} />, action: () => setScreen('groups') },
+    { key: 'friends', label: 'Freunde', icon: <UserRound size={23} strokeWidth={2.4} />, action: () => setScreen('friends') },
     { key: 'profile', label: 'Profil', icon: <Avatar profile={profile} />, action: () => setScreen('profile') },
   ];
 
