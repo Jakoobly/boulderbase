@@ -511,13 +511,13 @@
 
 /* Gruppenansicht: kleine Bereichs-Buttons */
 .group-panel-card{padding:10px 12px}
-.group-section-tabs{display:flex;gap:8px;align-items:center;overflow-x:auto;scrollbar-width:none}
+.group-section-tabs{display:flex;gap:8px;align-items:center;overflow-x:auto;overflow-y:visible;scrollbar-width:none;padding-top:8px}
 .group-section-tabs::-webkit-scrollbar{display:none}
 .group-section-tab{position:relative;flex:0 0 auto;border:.5px solid var(--border-md);background:var(--surface);color:var(--muted);border-radius:999px;padding:9px 13px;font-family:'Syne',sans-serif;font-size:12px;font-weight:900;cursor:pointer;line-height:1;white-space:nowrap}
 .group-section-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
-.group-section-tab.chat-tab{padding-right:15px}
-.unread-badge{position:absolute;top:-7px;right:-7px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#ef4444;color:#fff;border:2px solid var(--surface);font-size:10px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1}
-@media(max-width:420px){.group-section-tabs{gap:6px}.group-section-tab{font-size:11px;padding:8px 10px}.unread-badge{top:-6px;right:-6px}}
+.group-section-tab.chat-tab{padding-right:13px}
+.unread-badge{position:absolute;top:-8px;right:-7px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#ef4444;color:#fff;border:2px solid var(--surface);font-size:10px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+@media(max-width:420px){.group-section-tabs{gap:6px;padding-top:8px}.group-section-tab{font-size:11px;padding:8px 10px}.group-section-tab.chat-tab{padding-right:10px}.unread-badge{top:-8px;right:-7px}}
 
 /* Fix: Avatare in flex rows dürfen nicht durch .row > * gestreckt werden */
 .row > .avatar,
