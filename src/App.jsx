@@ -23,6 +23,7 @@ import { code, emptyRouteState, groupPath, routeMatchesGroup } from './utils.js'
 import { initialProfile } from './utils/profile.js';
 import { recalcParticipant } from './utils/scoring.js';
 import { findBadWord } from './utils/profanity.js';
+import { buildBadgesForProfile, getBadgeAwardMessage } from './utils/badges.js';
 import './styles.css';
 import './addons.css';
 
@@ -69,10 +70,16 @@ export default function App() {
   const [joinGroupTarget, setJoinGroupTarget] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
   const [toast, setToast] = useState('');
+  const [badgeUnlock, setBadgeUnlock] = useState(null);
   const [profileMetric, setProfileMetric] = useState('points');
   const [setup, setSetup] = useState({ title: '', mode: 'normal', playType: 'ffa', minutes: 45, selected: {}, guests: [], singleDevice: false, teams: [], customRules: DEFAULT_CUSTOM_RULES });
 
   function notify(msg) { setToast(msg); setTimeout(() => setToast(''), 2300); }
+  function showBadgeUnlock(message) {
+    if (!message) return;
+    setBadgeUnlock(message);
+    setTimeout(() => setBadgeUnlock(null), 3600);
+  }
   const safeName = () => profile?.name || user?.displayName || user?.email?.split('@')[0] || 'Boulderer';
 
   function screenPath(nextScreen) {
@@ -106,11 +113,33 @@ export default function App() {
     const ref = doc(db, 'users', u.uid);
     const snap = await getDoc(ref);
     const p = snap.exists() ? { ...initialProfile(u), ...snap.data() } : initialProfile(u);
-    if (!snap.exists()) await setDoc(ref, p);
-    setProfile(p);
+    const normalizedProfile = { ...p, badges: buildBadgesForProfile(p) };
+    if (!snap.exists()) await setDoc(ref, normalizedProfile);
+    else if (JSON.stringify(normalizedProfile.badges || {}) !== JSON.stringify(p.badges || {})) await setDoc(ref, { badges: normalizedProfile.badges }, { merge: true });
+    setProfile(normalizedProfile);
     if (location.pathname !== '/') setScreenState('home');
     else await restoreLastView(u.uid);
   }), []);
+
+  useEffect(() => {
+    if (!user?.uid || !profile) return;
+    const nextBadges = buildBadgesForProfile(profile);
+    if (JSON.stringify(nextBadges || {}) === JSON.stringify(profile.badges || {})) return;
+    const nextProfile = { ...profile, badges: nextBadges };
+    setProfile(nextProfile);
+    setDoc(doc(db, 'users', user.uid), { badges: nextBadges }, { merge: true });
+  }, [user?.uid, profile]);
+
+  useEffect(() => {
+    if (!user?.uid || !profile || !groups.length) return;
+    const groupTops = groups.reduce((sum, group) => sum + Number(group.members?.[user.uid]?.stats?.tops || 0), 0);
+    if (groupTops <= Number(profile.tops || 0)) return;
+    const profileWithGroupTops = { ...profile, tops: groupTops };
+    const nextBadges = buildBadgesForProfile(profileWithGroupTops);
+    const nextProfile = { ...profileWithGroupTops, badges: nextBadges };
+    setProfile(nextProfile);
+    setDoc(doc(db, 'users', user.uid), { tops: groupTops, badges: nextBadges }, { merge: true });
+  }, [groups, profile, user?.uid]);
 
   useEffect(() => {
     if (!user?.uid || screen === 'loading' || screen === 'auth') return;
@@ -752,9 +781,12 @@ export default function App() {
     const me = results[user.uid];
     if (me) {
       const hist = { id: activeSession.id, title: activeSession.title, groupName: activeSession.groupName, mode: activeSession.mode, endedAt: Date.now(), points: me.totalScore || 0, tops: me.routesSolved || 0, flashes: me.flashCount || 0, zones: me.zoneCount || 0, successRate: Math.round(((me.routesSolved || 0) / ROUTES.length) * 100), routeLog: me.routeLog || [] };
-      const nextProfile = { ...profile, sessions: (profile.sessions || 0) + 1, points: (profile.points || 0) + (me.totalScore || 0), tops: (profile.tops || 0) + (me.routesSolved || 0), flashes: (profile.flashes || 0) + (me.flashCount || 0), matchHistory: [hist, ...(profile.matchHistory || [])].slice(0, 30) };
+      const profileWithProgress = { ...profile, sessions: (profile.sessions || 0) + 1, points: (profile.points || 0) + (me.totalScore || 0), tops: (profile.tops || 0) + (me.routesSolved || 0), flashes: (profile.flashes || 0) + (me.flashCount || 0), matchHistory: [hist, ...(profile.matchHistory || [])].slice(0, 30) };
+      const nextProfile = { ...profileWithProgress, badges: buildBadgesForProfile(profileWithProgress) };
+      const badgeMessage = getBadgeAwardMessage(profile, nextProfile);
       setProfile(nextProfile);
       await setDoc(doc(db, 'users', user.uid), nextProfile, { merge: true });
+      showBadgeUnlock(badgeMessage);
     }
     if (activeSession.groupId) {
       const updates = { sessionCount: increment(1) };
@@ -773,6 +805,45 @@ export default function App() {
     }
     setScreenState('results');
     navigate(`/sessions/${activeSession.id}/results`);
+  }
+
+  async function logTraining(entry) {
+    if (!user?.uid || !profile) return;
+    const durationMinutes = Math.max(0, Math.round(Number(entry?.durationMinutes || 0)));
+    const tops = Math.max(0, Math.round(Number(entry?.tops || 0)));
+    const zones = Math.max(0, Math.round(Number(entry?.zones || 0)));
+    const flashes = Math.max(0, Math.round(Number(entry?.flashes || 0)));
+    if (!durationMinutes && !tops && !zones && !flashes) {
+      notify('Bitte Trainingsdaten eintragen');
+      return;
+    }
+    const now = Date.now();
+    const hist = {
+      id: `training-${now}`,
+      title: `Training ${new Date(now).toLocaleDateString('de-DE')}`,
+      groupName: 'Training',
+      mode: 'manual',
+      endedAt: now,
+      points: 0,
+      tops,
+      flashes,
+      zones,
+      durationMinutes,
+      notes: entry?.notes || ''
+    };
+    const profileWithProgress = {
+      ...profile,
+      sessions: (profile.sessions || 0) + 1,
+      tops: (profile.tops || 0) + tops,
+      flashes: (profile.flashes || 0) + flashes,
+      matchHistory: [hist, ...(profile.matchHistory || [])].slice(0, 30)
+    };
+    const nextProfile = { ...profileWithProgress, badges: buildBadgesForProfile(profileWithProgress) };
+    const badgeMessage = getBadgeAwardMessage(profile, nextProfile);
+    setProfile(nextProfile);
+    await setDoc(doc(db, 'users', user.uid), nextProfile, { merge: true });
+    notify('Training gespeichert');
+    showBadgeUnlock(badgeMessage);
   }
 
   async function createChallenge(form) {
@@ -1062,12 +1133,13 @@ export default function App() {
 
   return <div className="app-shell">
     {toast && <div className="toast show">{toast}</div>}
+    {badgeUnlock && <div className="badge-unlock-pop"><strong>{badgeUnlock}</strong><span>Dein Fortschritt wurde im Profil aktualisiert.</span></div>}
     {inviteGroup && <InviteModal group={inviteGroup} inviteUrl={inviteUrl} onClose={() => setInviteGroup(null)} onCopy={() => navigator.clipboard?.writeText(inviteUrl).then(() => notify('Einladungslink kopiert'))} />}
     {screen === 'home' && <NotificationBell notifications={allNotifications} seenAt={notificationsSeenAt} currentUid={user.uid} onMarkSeen={markNotificationsSeen} onDismiss={dismissNotification} onOpenGroup={openNotificationTarget} />}
     {screen === 'join' && <JoinGroupScreen group={joinGroupTarget} isMember={!!joinGroupTarget?.members?.[user.uid]?.active} join={joinInvitedGroup} back={() => setScreen('home')} />}
     {screen === 'friends' && <FriendsScreen user={user} profile={profile} setScreen={setScreen} notify={notify} inviteUid={new URLSearchParams(location.search).get('add') || ''} />}
     {screen === 'groups' && <Groups groups={groups} openGroup={openGroup} createGroup={createGroup} joinGroup={joinGroup} />}
-    {screen === 'home' && <Home profile={profile} startFree={() => startSetup('free')} />}
+    {screen === 'home' && <Home profile={profile} startFree={() => startSetup('free')} logTraining={logTraining} />}
     {screen === 'profile' && <Profile user={user} profile={profile} setProfile={setProfile} saveProfile={saveProfile} metric={profileMetric} setMetric={setProfileMetric} back={() => setScreen('home')} logout={() => signOut(auth)} deleteProfile={deleteProfile} notify={notify} personalChallenges={personalChallenges} createPersonalChallenge={createPersonalChallenge} addPersonalChallengeProgress={addPersonalChallengeProgress} deletePersonalChallenge={deletePersonalChallenge} />}
     {screen === 'group' && activeGroup && <Group group={activeGroup} sessions={sessions} challenges={challenges} polls={polls} focusPollId={notificationTarget?.type === 'poll' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : null} focusPanel={notificationTarget?.type === 'group-chat' && notificationTarget?.groupId === activeGroup.id ? 'chat' : null} back={() => setScreen('groups')} invite={() => setInviteGroup(activeGroup)} start={() => startSetup('group')} openChallenges={() => openChallengeScreen()} openChallenge={openChallengeScreen} editGroup={updateGroup} updateMemberRole={updateMemberRole} removeGroupMember={removeGroupMember} deleteGroup={deleteActiveGroup} currentUid={user.uid} openSession={(id) => { listenSession(id, true); setScreenState('game'); navigate(`/sessions/${id}`); }} sendMessage={addGroupMessage} createPoll={createGroupPoll} votePoll={voteGroupPoll} updatePoll={updateGroupPoll} deletePoll={deleteGroupPoll} />}
     {screen === 'challenges' && activeGroup && <Challenges group={activeGroup} challenges={challenges} focusChallengeId={notificationTarget?.type === 'challenge' && notificationTarget?.groupId === activeGroup.id ? notificationTarget.id : challengeFocusId} currentUid={user.uid} back={() => setScreen('group')} createChallenge={createChallenge} addProgress={addChallengeProgress} deleteChallenge={deleteChallenge} />}

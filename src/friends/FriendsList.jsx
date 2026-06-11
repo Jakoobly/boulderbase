@@ -1,13 +1,12 @@
 // src/friends/FriendsList.jsx
 import { useMemo, useState } from 'react';
 import Avatar from '../components/Avatar.jsx';
-import ProfileQrModal from '../components/ProfileQrModal.jsx';
+import PublicProfileModal from '../components/PublicProfileModal.jsx';
 import { removeFriend } from '../services/friendService.js';
 
 export default function FriendsList({ user, friends, onChanged, notify }) {
   const [search, setSearch] = useState('');
   const [selectedFriend, setSelectedFriend] = useState(null);
-  const [qrFriend, setQrFriend] = useState(null);
   const filteredFriends = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return friends;
@@ -24,31 +23,6 @@ export default function FriendsList({ user, friends, onChanged, notify }) {
     } catch (e) {
       notify?.(e.message || 'Entfernen fehlgeschlagen');
     }
-  }
-
-  if (selectedFriend) {
-    return (
-      <section className="card">
-        <button type="button" className="back-btn mb12" onClick={() => setSelectedFriend(null)}>&lt; Freunde</button>
-        <div className="friend-profile-head">
-          <Avatar user={selectedFriend} className="big ice" />
-          <div>
-            <div className="card-title">Freund</div>
-            <h2>{selectedFriend.name || 'Boulderer'}</h2>
-            <div className="sub">{selectedFriend.status || selectedFriend.description || 'Keine Beschreibung'}</div>
-          </div>
-        </div>
-        <div className="stat-grid mt12">
-          <div className="stat-box"><div className="stat-num">{selectedFriend.points || 0}</div><div className="stat-lbl">Punkte</div></div>
-          <div className="stat-box"><div className="stat-num">{selectedFriend.sessions || 0}</div><div className="stat-lbl">Sessions</div></div>
-        </div>
-        <button type="button" className="btn btn-secondary compact profile-qr-action" onClick={() => setQrFriend(selectedFriend)}>QR-Code</button>
-        <div className="friend-danger-area">
-          <button type="button" className="friend-remove-link" onClick={() => remove(selectedFriend.uid)}>Freundschaft beenden</button>
-        </div>
-        {qrFriend && <ProfileQrModal user={{ uid: qrFriend.uid }} profile={qrFriend} onClose={() => setQrFriend(null)} onCopy={(url) => navigator.clipboard?.writeText(url).then(() => { notify?.('Profil-Link kopiert'); setQrFriend(null); })} />}
-      </section>
-    );
   }
 
   return (
@@ -76,6 +50,13 @@ export default function FriendsList({ user, friends, onChanged, notify }) {
           </button>
         ))}
       </div>
+      {selectedFriend && <PublicProfileModal
+        uid={selectedFriend.uid}
+        profile={selectedFriend}
+        onClose={() => setSelectedFriend(null)}
+        notify={notify}
+        footer={<button type="button" className="friend-remove-link public-profile-danger" onClick={() => remove(selectedFriend.uid)}>Freundschaft beenden</button>}
+      />}
     </section>
   );
 }

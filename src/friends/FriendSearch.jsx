@@ -1,12 +1,14 @@
 // src/friends/FriendSearch.jsx
 import { useEffect, useState } from 'react';
 import Avatar from '../components/Avatar.jsx';
+import PublicProfileModal from '../components/PublicProfileModal.jsx';
 import { getUserProfile, searchUsers, sendFriendRequest } from '../services/friendService.js';
 
 export default function FriendSearch({ user, profile, friendStatus, inviteUid, onChanged, notify }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +72,7 @@ export default function FriendSearch({ user, profile, friendStatus, inviteUid, o
         {results.map((u) => {
           const status = friendStatus(u.uid);
           return (
-            <div className="list-item" key={u.uid}>
+            <div className="list-item clickable-user-row" key={u.uid} role="button" tabIndex={0} onClick={() => setSelectedUser(u)} onKeyDown={(e) => e.key === 'Enter' && setSelectedUser(u)}>
               <div className="row">
                 <Avatar user={u} className="ice" />
                 <div>
@@ -78,7 +80,7 @@ export default function FriendSearch({ user, profile, friendStatus, inviteUid, o
                   <div className="sub">{u.points || 0} Punkte · {status === 'friends' ? 'Schon Freund' : 'Profil gefunden'}</div>
                 </div>
               </div>
-              <div className="mini-actions">
+              <div className="mini-actions" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                 {status === 'none' && <button className="back-btn" onClick={() => send(u.uid)}>Hinzufügen</button>}
                 {status === 'outgoing' && <button className="back-btn" disabled>Anfrage gesendet</button>}
                 {status === 'friends' && <span className="pill green">Freund</span>}
@@ -88,6 +90,7 @@ export default function FriendSearch({ user, profile, friendStatus, inviteUid, o
         })}
         {!loading && term.length >= 2 && results.length === 0 && <div className="empty">Keine Nutzer gefunden.</div>}
       </div>
+      {selectedUser && <PublicProfileModal uid={selectedUser.uid} profile={selectedUser} onClose={() => setSelectedUser(null)} notify={notify} />}
     </section>
   );
 }

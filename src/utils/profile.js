@@ -8,6 +8,7 @@ export function initialProfile(user) {
     tops: 0,
     flashes: 0,
     points: 0,
+    badges: {},
     matchHistory: []
   };
 }

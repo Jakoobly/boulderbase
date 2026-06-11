@@ -43,6 +43,19 @@
 /* Readability improvements */
 * { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 .logo, .btn, button, input, select, textarea { letter-spacing: 0 !important; }
+
+.app-shell {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+select,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .btn { font-weight: 650 !important; }
 .card-title, label, .tag, .sub, .route-sub, .score-lbl { letter-spacing: .3px !important; }
 .quick-time-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 10px; }

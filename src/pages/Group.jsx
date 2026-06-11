@@ -3,6 +3,7 @@ import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
 import Avatar from '../components/Avatar.jsx';
 import PersonalizeModal from '../components/PersonalizeModal.jsx';
+import PublicProfileModal from '../components/PublicProfileModal.jsx';
 import GroupChat from '../features/chat/GroupChat.jsx';
 import GroupPolls from '../features/polls/GroupPolls.jsx';
 import { rank, safeDate } from '../utils.js';
@@ -93,6 +94,7 @@ export default function Group({ group, sessions, challenges, polls = [], focusPo
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteName, setDeleteName] = useState('');
   const [selectedMemberUid, setSelectedMemberUid] = useState(null);
+  const [profileMember, setProfileMember] = useState(null);
   const [leaderMetric, setLeaderMetric] = useState('points');
   const [activeGroupPanel, setActiveGroupPanel] = useState('members');
   const [pollComposerOpen, setPollComposerOpen] = useState(false);
@@ -199,10 +201,12 @@ export default function Group({ group, sessions, challenges, polls = [], focusPo
         const canChangeThisRole = canOpenRoleMenu && !isOwner && !isGuest;
         const canRemoveThisMember = canOpenRoleMenu && !isOwner && !isAdmin;
         return <div className={`member-role-card ${isSelected ? 'open' : ''} ${!canOpenRoleMenu ? 'locked' : ''}`} key={m.uid}>
-          <button type="button" className="member-role-summary" disabled={!canOpenRoleMenu} onClick={() => setSelectedMemberUid(isSelected ? null : m.uid)}>
-            <div className="row"><Avatar profile={m} className="ice" /><div className="member-role-text"><h3 title={m.name || 'Unbekannt'}><span className="member-one-line-name">{oneLineName(m.name)}</span>{m.uid === currentUid ? <span className="member-self-label">(Du)</span> : null}</h3><div className="sub">{roleLabel(m.role, m.uid)}</div></div></div>
-            {canOpenRoleMenu && <span className="member-role-chevron">{isSelected ? '−' : '+'}</span>}
-          </button>
+          <div className="member-role-summary">
+            <button type="button" className="member-profile-open" onClick={() => setProfileMember(m)}>
+              <div className="row"><Avatar profile={m} className="ice" /><div className="member-role-text"><h3 title={m.name || 'Unbekannt'}><span className="member-one-line-name">{oneLineName(m.name)}</span>{m.uid === currentUid ? <span className="member-self-label">(Du)</span> : null}</h3><div className="sub">{roleLabel(m.role, m.uid)}</div></div></div>
+            </button>
+            {canOpenRoleMenu && <button type="button" className="member-role-chevron" onClick={() => setSelectedMemberUid(isSelected ? null : m.uid)}>{isSelected ? '−' : '+'}</button>}
+          </div>
           {isSelected && <div className="member-role-panel">
             <div className="sub">Aktuelle Rolle: <strong>{roleLabel(m.role, m.uid)}</strong></div>
             {isOwner && <div className="notice small-notice">Der Ersteller bleibt immer Admin und kann nicht geändert werden.</div>}
@@ -223,7 +227,7 @@ export default function Group({ group, sessions, challenges, polls = [], focusPo
     </>}
 
     {activeGroupPanel === 'leaderboard' && <>
-    <div className="card"><div className="feed-head"><div><div className="card-title">Bestenliste</div><h3>Gruppenwertung</h3></div><select className="small-select" value={leaderMetric} onChange={(e) => setLeaderMetric(e.target.value)}><option value="points">Gesamtpunkte</option><option value="month">Punkte diesen Monat</option><option value="sessions">Sessions</option><option value="tops">Tops</option><option value="best">Beste Session</option><option value="avg">Ø Punkte</option></select></div>{[...members].sort((a, b) => leaderboardValue(b, leaderMetric, monthPointsByMember) - leaderboardValue(a, leaderMetric, monthPointsByMember)).map((m, i) => <div className="lb-row" key={m.uid}><div className="lb-rank">{rank(i)}</div><Avatar profile={m} className="ice" /><div className="lb-name" title={m.name || 'Unbekannt'}>{oneLineName(m.name)}</div><div className="lb-score">{leaderboardValue(m, leaderMetric, monthPointsByMember)}</div></div>)}</div>
+    <div className="card"><div className="feed-head"><div><div className="card-title">Bestenliste</div><h3>Gruppenwertung</h3></div><select className="small-select" value={leaderMetric} onChange={(e) => setLeaderMetric(e.target.value)}><option value="points">Gesamtpunkte</option><option value="month">Punkte diesen Monat</option><option value="sessions">Sessions</option><option value="tops">Tops</option><option value="best">Beste Session</option><option value="avg">Ø Punkte</option></select></div>{[...members].sort((a, b) => leaderboardValue(b, leaderMetric, monthPointsByMember) - leaderboardValue(a, leaderMetric, monthPointsByMember)).map((m, i) => <button type="button" className="lb-row lb-row-button" key={m.uid} onClick={() => setProfileMember(m)}><div className="lb-rank">{rank(i)}</div><Avatar profile={m} className="ice" /><div className="lb-name" title={m.name || 'Unbekannt'}>{oneLineName(m.name)}</div><div className="lb-score">{leaderboardValue(m, leaderMetric, monthPointsByMember)}</div></button>)}</div>
     </>}
 
     {activeGroupPanel === 'stats' && <>
@@ -252,5 +256,6 @@ export default function Group({ group, sessions, challenges, polls = [], focusPo
       </div>
     </div>}
     {personalizeOpen && <PersonalizeModal title="Gruppe anpassen" value={group} descriptionLabel="Beschreibung" onClose={() => setPersonalizeOpen(false)} onSave={saveGroupPersonalization} dangerAction={canDeleteGroup ? { label: 'Gruppe löschen', onClick: () => { setPersonalizeOpen(false); setDeleteName(''); setDeleteOpen(true); } } : null} />}
+    {profileMember && <PublicProfileModal uid={profileMember.uid} profile={profileMember} onClose={() => setProfileMember(null)} />}
   </main>;
 }
