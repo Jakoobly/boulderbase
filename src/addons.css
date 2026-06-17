@@ -464,13 +464,6 @@
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-.profile-inline-badges{
-  display:flex;
-  align-items:center;
-  gap:6px;
-  margin-top:8px;
-  min-height:42px;
-}
 .friend-danger-area{
   display:flex;
   justify-content:flex-end;
